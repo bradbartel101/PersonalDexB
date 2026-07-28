@@ -175,15 +175,17 @@ const mem = {};
 let storageMode = "memory";
 
 async function detectAndLoad() {
-  try {
-    const s = window.storage;
-    if (s && typeof s.getItem === "function" && typeof s.setItem === "function") {
-      const v = await s.getItem(KEY);
-      storageMode = "artifact";
-      if (v == null) return null;
-      return typeof v === "string" ? v : v.value != null ? v.value : null;
-    }
-  } catch (e) { /* fall through */ }
+  if (!__STANDALONE__) {
+    try {
+      const s = window.storage;
+      if (s && typeof s.getItem === "function" && typeof s.setItem === "function") {
+        const v = await s.getItem(KEY);
+        storageMode = "artifact";
+        if (v == null) return null;
+        return typeof v === "string" ? v : v.value != null ? v.value : null;
+      }
+    } catch (e) { /* fall through */ }
+  }
   try {
     localStorage.setItem(KEY + ":probe", "1");
     localStorage.removeItem(KEY + ":probe");
@@ -195,7 +197,7 @@ async function detectAndLoad() {
 }
 
 async function persist(str) {
-  if (storageMode === "artifact") {
+  if (!__STANDALONE__ && storageMode === "artifact") {
     try { await window.storage.setItem(KEY, str); return; } catch (e) { /* degrade */ }
   }
   if (storageMode !== "memory") {
@@ -997,26 +999,49 @@ function parseCSV(text) {
 }
 
 function contactsFromCSV(text) {
-  const rows = parseCSV(text);
+  const rows = parseCSV(String(text).replace(/^﻿/, ""));
   if (rows.length < 2) return [];
-  const headers = rows[0].map((h) => h.trim().toLowerCase());
-  const find = (...names) => headers.findIndex((h) => names.some((n) => h.includes(n)));
+
+  // Find the header row. LinkedIn's Connections.csv opens with a "Notes:"
+  // preamble paragraph before the real header, so scan instead of assuming row 0.
+  let hi = -1;
+  for (let i = 0; i < Math.min(rows.length, 12); i++) {
+    const cells = rows[i].map((c) => c.trim().toLowerCase());
+    if (cells.includes("first name") || cells.includes("name") || cells.includes("full name")) { hi = i; break; }
+  }
+  if (hi < 0 || hi === rows.length - 1) return [];
+
+  const headers = rows[hi].map((h) => h.trim().toLowerCase());
+  const exact = (...names) => headers.findIndex((h) => names.includes(h));
+  const loose = (...names) => headers.findIndex((h) => names.some((n) => h.includes(n)));
+  const iFirst = exact("first name");
+  const iLast = exact("last name");
   const idx = {
-    name: find("name"), email: find("email"), phone: find("phone", "mobile"),
-    company: find("company", "organization", "org"), role: find("role", "title", "position"),
-    location: find("location", "city"), birthday: find("birthday", "birth"),
-    tags: find("tags", "labels"), notes: find("notes"), context: find("context", "how we met", "met"),
+    name: exact("name", "full name") >= 0 ? exact("name", "full name") : loose("name"),
+    email: loose("email"), phone: loose("phone", "mobile"),
+    company: loose("company", "organization", "org"), role: loose("role", "title", "position"),
+    location: loose("location", "city"), birthday: loose("birthday", "birth"),
+    tags: loose("tags", "labels"), notes: loose("notes"), context: loose("context", "how we met", "met"),
+    url: exact("url", "profile url", "linkedin url", "linkedin"),
+    connected: loose("connected on", "connected"),
   };
-  if (idx.name < 0) return [];
+  if (iFirst < 0 && idx.name < 0) return [];
+
   const out = [];
-  for (const r of rows.slice(1)) {
+  for (const r of rows.slice(hi + 1)) {
     const get = (i) => (i >= 0 && r[i] ? r[i].trim() : "");
-    const name = get(idx.name);
+    const name = iFirst >= 0
+      ? (get(iFirst) + " " + get(iLast)).trim()
+      : get(idx.name);
     if (!name) continue;
     const c = blankContact(name);
     c.email = get(idx.email); c.phone = get(idx.phone); c.company = get(idx.company);
     c.role = get(idx.role); c.location = get(idx.location); c.birthday = get(idx.birthday);
     c.notes = get(idx.notes); c.context = get(idx.context);
+    const url = get(idx.url);
+    if (url) c.custom.push({ id: uid(), label: "LinkedIn", value: url });
+    const connected = get(idx.connected);
+    if (connected && !c.context) c.context = "Connected on LinkedIn · " + connected;
     const tags = get(idx.tags);
     if (tags) c.tags = tags.split(/[;|]|,\s*/).map((t) => t.trim().toLowerCase()).filter(Boolean);
     out.push(c);
@@ -1155,7 +1180,7 @@ function App() {
   const doExport = async () => {
     const payload = JSON.stringify({ ...data, exportedAt: new Date().toISOString() }, null, 2);
     const filename = "hearth-backup-" + iso(todayMid()) + ".json";
-    const dl = window.claude && window.claude.downloads;
+    const dl = !__STANDALONE__ && window.claude && window.claude.downloads;
     if (dl && typeof dl.save === "function") {
       try {
         await dl.save({ filename, data: payload });
@@ -1207,7 +1232,7 @@ function App() {
     const r = new FileReader();
     r.onload = () => {
       const added = contactsFromCSV(String(r.result));
-      if (!added.length) { toast("No contacts found — the CSV needs a 'name' column"); return; }
+      if (!added.length) { toast("No contacts found — use a CSV with a name column, or LinkedIn's Connections.csv"); return; }
       setData((d) => ({ ...d, contacts: [...d.contacts, ...added] }));
       setRoute({ name: "people" });
       toast("Imported " + added.length + " contacts from CSV");

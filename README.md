@@ -1,6 +1,9 @@
 # Hearth — Personal CRM
 
-A single-file personal relationship manager modeled on Dex Pro, for one user, no login. Built as a React app bundled into one self-contained HTML file (`hearth.html`) suitable for publishing as a Claude artifact — no CDNs, fonts and React are inlined.
+A single-file personal relationship manager modeled on Dex Pro, for one user, no login. Built as a React app bundled into self-contained HTML — no CDNs, fonts and React are inlined. The build produces two outputs:
+
+- **`hearth-standalone.html`** — a complete document you can open directly in any browser; all data persists in `localStorage`
+- **`hearth.html`** — a fragment build for publishing as a Claude artifact (prefers the host's `window.storage` API, falls back to `localStorage`)
 
 ## The daily loop
 
@@ -13,7 +16,7 @@ Open app → **Today** shows who's overdue (by cadence + last interaction, most 
 - **Interaction timeline**: call / coffee / message / email / note entries, newest first
 - **Today dashboard**: overdue reach-out list with inline quick-log + snooze; birthdays and reminders in the next 30 days
 - **People view**: search (`/`), filter by group / tag / cadence status, list ⇄ grid toggle, quick add by name (`n`)
-- **Data**: JSON export/restore, CSV contact import, clearable sample data
+- **Data**: JSON export/restore, CSV contact import — including LinkedIn's `Connections.csv` (skips the Notes preamble, joins First/Last Name, maps URL → LinkedIn field, Position → role, Connected On → context) — and clearable sample data
 - **Stats**: circle size, overdue count, quietest contact
 - Light + dark themes, keyboard shortcuts (`n`, `/`, `esc`)
 

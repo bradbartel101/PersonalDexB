@@ -8,7 +8,7 @@ page.on("pageerror", (e) => errors.push("pageerror: " + e.message));
 page.on("console", (m) => { if (m.type() === "error") errors.push("console: " + m.text()); });
 
 // Simulate the artifact wrapper: file lacks <html>/<body>; browsers handle that fine.
-await page.goto("file://" + path.resolve("hearth.html"));
+await page.goto("file://" + path.resolve(process.argv[2] || "hearth.html"));
 await page.waitForTimeout(600);
 
 const t = async (name, fn) => {
