@@ -1299,6 +1299,69 @@ function contactsFromCSV(text) {
   return out;
 }
 
+/* ---- LinkedIn capture interchange (from the companion extension) ---- */
+
+const SITE_URL = "https://bradbartel101.github.io/PersonalDexB/";
+
+function normLi(u) {
+  return String(u || "").toLowerCase().trim()
+    .replace(/^https?:\/\/(www\.)?/, "").replace(/[?#].*$/, "").replace(/\/+$/, "");
+}
+
+function peopleFromCapture(text) {
+  let j;
+  try { j = JSON.parse(text); } catch (e) { return null; }
+  const arr = j && j.hearth === "linkedin-capture" && Array.isArray(j.people) ? j.people
+    : Array.isArray(j) ? j : null;
+  if (!arr) return null;
+  return arr.filter((p) => p && typeof p.name === "string" && p.name.trim()).map((p) => {
+    const c = blankContact(p.name);
+    let role = typeof p.role === "string" ? p.role : "";
+    let company = typeof p.company === "string" ? p.company : "";
+    if ((!role || !company) && typeof p.headline === "string") {
+      const m = p.headline.match(/^(.+?)\s+(?:at|@)\s+(.+)$/i);
+      if (m) { role = role || m[1].trim(); company = company || m[2].trim(); }
+    }
+    c.role = role; c.company = company;
+    c.location = typeof p.location === "string" ? p.location : "";
+    if (!role && typeof p.headline === "string") c.context = p.headline;
+    if (typeof p.linkedin === "string" && p.linkedin)
+      c.custom.push({ id: uid(), label: "LinkedIn", value: p.linkedin });
+    c.photo = typeof p.photo === "string" && p.photo.startsWith("data:image/") ? p.photo : null;
+    return c;
+  });
+}
+
+function findImportMatch(contacts, draft) {
+  const dl = normLi((draft.custom.find((f) => f.label === "LinkedIn") || {}).value);
+  if (dl) {
+    const hit = contacts.find((c) => (c.custom || []).some((f) => normLi(f.value) === dl));
+    if (hit) return hit.id;
+  }
+  const n = draft.name.trim().toLowerCase().replace(/\s+/g, " ");
+  const hit = contacts.find((c) => (c.name || "").trim().toLowerCase().replace(/\s+/g, " ") === n);
+  return hit ? hit.id : null;
+}
+
+function shrinkDataUri(uri, max = 160) {
+  return new Promise((resolve) => {
+    if (!uri || !/^data:image\//.test(uri)) return resolve(null);
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const scale = Math.min(1, max / Math.max(img.width, img.height));
+        const cv = document.createElement("canvas");
+        cv.width = Math.max(1, Math.round(img.width * scale));
+        cv.height = Math.max(1, Math.round(img.height * scale));
+        cv.getContext("2d").drawImage(img, 0, 0, cv.width, cv.height);
+        resolve(cv.toDataURL("image/jpeg", 0.85));
+      } catch (e) { resolve(uri); }
+    };
+    img.onerror = () => resolve(null);
+    img.src = uri;
+  });
+}
+
 /* ============================== app ============================== */
 
 function normalizeData(raw) {
@@ -1331,8 +1394,14 @@ function App() {
   const [toastState, setToastState] = useState(null);
   const [mode, setMode] = useState("memory");
   const [exportText, setExportText] = useState(null);
+  const [liOpen, setLiOpen] = useState(false);
+  const [review, setReview] = useState(null);
+  const [impGroup, setImpGroup] = useState("");
+  const [impTag, setImpTag] = useState("");
+  const [pasteText, setPasteText] = useState("");
   const jsonRef = useRef(null);
   const csvRef = useRef(null);
+  const capRef = useRef(null);
   const toastTimer = useRef(null);
 
   const toast = useCallback((msg) => {
@@ -1549,19 +1618,90 @@ function App() {
     r.readAsText(file);
   };
 
+  const openReview = useCallback(async (drafts, source) => {
+    const items = await Promise.all(drafts.map(async (draft) => {
+      if (draft.photo) draft.photo = await shrinkDataUri(draft.photo);
+      return { draft, matchId: findImportMatch(contacts, draft), selected: true };
+    }));
+    setImpGroup("");
+    setImpTag(source === "linkedin" ? "linkedin" : "");
+    setReview({ source, items });
+    setLiOpen(true);
+    setPasteText("");
+  }, [contacts]);
+
   const onCSVFile = (e) => {
     const file = e.target.files && e.target.files[0];
     e.target.value = "";
     if (!file) return;
     const r = new FileReader();
     r.onload = () => {
-      const added = contactsFromCSV(String(r.result));
-      if (!added.length) { toast("No contacts found — use a CSV with a name column, or LinkedIn's Connections.csv"); return; }
-      setData((d) => ({ ...d, contacts: [...d.contacts, ...added] }));
-      setRoute({ name: "people" });
-      toast("Imported " + added.length + " contacts from CSV");
+      const drafts = contactsFromCSV(String(r.result));
+      if (!drafts.length) { toast("No contacts found — use a CSV with a name column, or LinkedIn's Connections.csv"); return; }
+      openReview(drafts, "csv");
     };
     r.readAsText(file);
+  };
+
+  const onCaptureFile = (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    const r = new FileReader();
+    r.onload = () => {
+      const drafts = peopleFromCapture(String(r.result));
+      if (!drafts || !drafts.length) { toast("That file isn't a Hearth capture export"); return; }
+      openReview(drafts, "linkedin");
+    };
+    r.readAsText(file);
+  };
+
+  const onPaste = () => {
+    const drafts = peopleFromCapture(pasteText);
+    if (!drafts || !drafts.length) { toast("That doesn't look like JSON from the Hearth extension"); return; }
+    openReview(drafts, "linkedin");
+  };
+
+  const applyImport = () => {
+    if (!review) return;
+    const group = impGroup.trim();
+    const tag = impTag.trim().toLowerCase();
+    const chosen = review.items.filter((i) => i.selected);
+    const updated = chosen.filter((i) => i.matchId).length;
+    const added = chosen.length - updated;
+    setData((d) => {
+      let list = [...d.contacts];
+      for (const it of review.items) {
+        if (!it.selected) continue;
+        if (it.matchId && list.some((c) => c.id === it.matchId)) {
+          list = list.map((c) => {
+            if (c.id !== it.matchId) return c;
+            const m = { ...c, sample: false };
+            if (it.draft.photo) m.photo = it.draft.photo;
+            for (const k of ["company", "role", "location", "context", "email", "phone"])
+              if (!m[k] && it.draft[k]) m[k] = it.draft[k];
+            const dl = it.draft.custom.find((f) => f.label === "LinkedIn");
+            if (dl && !(m.custom || []).some((f) => normLi(f.value) === normLi(dl.value)))
+              m.custom = [...(m.custom || []), dl];
+            for (const t of it.draft.tags || []) m.tags = [...new Set([...(m.tags || []), t])];
+            if (group) m.groups = [...new Set([...(m.groups || []), group])];
+            if (tag) m.tags = [...new Set([...(m.tags || []), tag])];
+            return m;
+          });
+        } else {
+          const c = { ...it.draft };
+          if (group) c.groups = [...new Set([...(c.groups || []), group])];
+          if (tag) c.tags = [...new Set([...(c.tags || []), tag])];
+          list.push(c);
+        }
+      }
+      const groups = group && !d.groups.includes(group) ? [...d.groups, group] : d.groups;
+      return { ...d, contacts: list, groups };
+    });
+    setReview(null);
+    setLiOpen(false);
+    setRoute({ name: "people" });
+    toast("Imported " + added + " new" + (updated ? ", updated " + updated + " existing" : ""));
   };
 
   const sampleCount = contacts.filter((c) => c.sample).length;
@@ -1621,7 +1761,7 @@ function App() {
         <div className="rail-tools">
           <button className="rail-tool" onClick={doExport}><Icon n="download" size={15} /><span>Export backup</span></button>
           <button className="rail-tool" onClick={() => jsonRef.current && jsonRef.current.click()}><Icon n="upload" size={15} /><span>Restore JSON</span></button>
-          <button className="rail-tool" onClick={() => csvRef.current && csvRef.current.click()}><Icon n="upload" size={15} /><span>Import CSV</span></button>
+          <button className="rail-tool" onClick={() => { setReview(null); setLiOpen(true); }}><Icon n="users" size={15} /><span>LinkedIn / CSV import</span></button>
           <button className="rail-tool" onClick={() => setDupOpen(true)}><Icon n="merge" size={15} /><span>Merge duplicates</span></button>
           {sampleCount > 0 && (
             <ConfirmButton className="rail-tool" label={<><Icon n="broom" size={15} /><span>Clear sample data</span></>}
@@ -1632,6 +1772,7 @@ function App() {
         <div className="rail-hint"><kbd>n</kbd> new person · <kbd>/</kbd> search · <kbd>esc</kbd> back</div>
         <input ref={jsonRef} type="file" accept=".json,application/json" style={{ display: "none" }} onChange={onJSONFile} />
         <input ref={csvRef} type="file" accept=".csv,text/csv" style={{ display: "none" }} onChange={onCSVFile} />
+        <input ref={capRef} type="file" accept=".json,application/json" style={{ display: "none" }} onChange={onCaptureFile} />
       </aside>
 
       <main>
@@ -1671,6 +1812,98 @@ function App() {
       </main>
 
       <Toast toast={toastState} />
+
+      {liOpen && !review && (
+        <div className="overlay" onClick={() => setLiOpen(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3>Bring in people from LinkedIn</h3>
+            <p>
+              LinkedIn's API doesn't let apps read your connections or photos, so Hearth works the way
+              Dex does — through your own browser. Two channels:
+            </p>
+            <div className="li-channel">
+              <b>1 · Profiles with photos — browser extension</b>
+              <p>Install the Hearth capture extension, browse any profile on LinkedIn, click
+                <b> Save to Hearth</b>, then bring the captures here. Photos, headline, company, and
+                location come along, and existing people are updated in place.</p>
+              <div className="li-actions">
+                <a className="btn sm" href={SITE_URL + "hearth-extension.zip"} download>
+                  <Icon n="download" size={14} />Get the extension
+                </a>
+                <button className="btn sm" onClick={() => capRef.current && capRef.current.click()}>
+                  <Icon n="upload" size={14} />Import captured JSON…
+                </button>
+              </div>
+              <textarea className="li-paste" rows={3} value={pasteText}
+                placeholder='…or paste the JSON from the extension popup ("Copy JSON") here'
+                onChange={(e) => setPasteText(e.target.value)} />
+              {pasteText.trim() && (
+                <button className="btn primary sm" onClick={onPaste}>Review pasted captures</button>
+              )}
+            </div>
+            <div className="li-channel">
+              <b>2 · Your whole network — Connections.csv</b>
+              <p>LinkedIn → Settings → Data privacy → <i>Get a copy of your data</i> → Connections.
+                No photos in the export (LinkedIn doesn't include them), but names, companies, roles,
+                and profile URLs import cleanly.</p>
+              <div className="li-actions">
+                <button className="btn sm" onClick={() => csvRef.current && csvRef.current.click()}>
+                  <Icon n="upload" size={14} />Import Connections.csv…
+                </button>
+              </div>
+            </div>
+            <div className="modal-actions">
+              <button className="btn" onClick={() => setLiOpen(false)}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {liOpen && review && (
+        <div className="overlay" onClick={() => { setReview(null); setLiOpen(false); }}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3>Review import</h3>
+            <p>
+              {review.items.filter((i) => i.selected).length} of {review.items.length} selected ·{" "}
+              {review.items.filter((i) => i.matchId).length} match people you already have and will be
+              updated in place, photos included.
+            </p>
+            <div className="li-options">
+              <input className="bulk-input" style={{ width: 150 }} list="import-groups" value={impGroup}
+                placeholder="Add all to group…" onChange={(e) => setImpGroup(e.target.value)} />
+              <datalist id="import-groups">
+                {data.groups.map((g) => <option key={g} value={g} />)}
+              </datalist>
+              <input className="bulk-input" style={{ width: 110 }} value={impTag}
+                placeholder="Apply tag…" onChange={(e) => setImpTag(e.target.value)} />
+            </div>
+            <div className="li-review">
+              {review.items.map((it, i) => (
+                <label className="li-item" key={i}>
+                  <input type="checkbox" className="row-check" checked={it.selected}
+                    onChange={() => setReview((r) => ({
+                      ...r,
+                      items: r.items.map((x, j) => (j === i ? { ...x, selected: !x.selected } : x)),
+                    }))} />
+                  <Avatar c={it.draft} size={32} />
+                  <span className="li-who">
+                    <b>{it.draft.name}</b>
+                    <span>{[it.draft.role, it.draft.company, it.draft.location].filter(Boolean).join(" · ") || it.draft.context || "—"}</span>
+                  </span>
+                  {it.matchId && <span className="pill ok">updates existing</span>}
+                </label>
+              ))}
+            </div>
+            <div className="modal-actions">
+              <button className="btn" onClick={() => setReview(null)}>Back</button>
+              <button className="btn primary" disabled={!review.items.some((i) => i.selected)}
+                onClick={applyImport}>
+                Import {review.items.filter((i) => i.selected).length}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {dupOpen && (
         <div className="overlay" onClick={() => setDupOpen(false)}>

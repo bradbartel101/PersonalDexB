@@ -32,6 +32,24 @@ Open app → **Today** shows who's overdue (by cadence + last interaction, most 
 - **Quick actions**: one-click `mailto:` / `tel:` from profile fields
 - **Relationship insights**: interactions logged and typical gap between them, per contact
 
+## Online access
+
+Every push deploys to GitHub Pages via `.github/workflows/deploy.yml`:
+
+- **App**: https://bradbartel101.github.io/PersonalDexB/
+- **Extension**: https://bradbartel101.github.io/PersonalDexB/hearth-extension.zip
+
+Data persists in the browser's `localStorage` for that origin, so use the same browser (and export JSON backups from the sidebar).
+
+## LinkedIn integration
+
+LinkedIn's official API does not allow third-party apps to read connections or photos, so Hearth uses the same mechanism Dex does — your own browser:
+
+1. **Browser extension** (`extension/`, MV3): while you browse LinkedIn, a "Save to Hearth" button on any profile captures name, headline, company, location, profile URL, and photo (downscaled to ~160px). Captures queue in the extension popup; copy as JSON or download, then import in the app.
+2. **Connections.csv**: LinkedIn's data export imports the whole network (no photos — LinkedIn omits them from exports).
+
+Both channels flow through an import review modal: check who to bring in, assign a group and tag, and anyone matching an existing contact (by LinkedIn URL, then name) is updated in place — photo included, timelines preserved — instead of duplicated.
+
 ## Persistence
 
 A storage adapter prefers the artifact storage API (`window.storage`) when the host provides it, falls back to `localStorage`, and degrades to in-memory with a visible warning banner (plus export/restore) when neither is available. JSON export uses the artifact `downloads` capability when present, with an anchor-download fallback.
