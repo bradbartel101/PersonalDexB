@@ -32,6 +32,10 @@ Open app → **Today** shows who's overdue (by cadence + last interaction, most 
 - **Quick actions**: one-click `mailto:` / `tel:` from profile fields
 - **Relationship insights**: interactions logged and typical gap between them, per contact
 
+## Cloud sync & sharing (Vercel)
+
+Deploying to Vercel (see **DEPLOY.md**) turns Hearth into a shared, synced workspace: serverless routes in `api/` store the whole CRM as a versioned document in Upstash Redis, gated by a single `HEARTH_PASSPHRASE`. Every device (laptop, iPad, a friend's phone) that enters the passphrase shares the same live data — the client pushes debounced saves with optimistic versioning and polls every 25s. The extension can POST captures directly to `api/captures` (popup → "Connect to Hearth"), which surface as a "Review captures" button on all devices. Without a backend (GitHub Pages, local file), the app runs local-only exactly as before.
+
 ## Online access
 
 Every push deploys to GitHub Pages via `.github/workflows/deploy.yml`:

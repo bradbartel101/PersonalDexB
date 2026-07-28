@@ -1,2 +1,4 @@
 node_modules/
 shot-*.png
+devstore.json
+synctest-store.json

@@ -34,6 +34,15 @@
   .empty { padding: 18px 8px; text-align: center; color: #66746D; font-size: 12.5px; }
   .note { font-size: 11px; color: #98A49E; margin: 10px 0 0; }
   #status { font-size: 11.5px; color: #2E6B57; height: 14px; margin-top: 7px; text-align: center; }
+  details { margin-top: 10px; }
+  summary { font-size: 12.5px; font-weight: 600; color: #2E6B57; cursor: pointer; }
+  .settings-body { display: flex; flex-direction: column; gap: 7px; margin-top: 8px; }
+  .settings-body input {
+    border: 1px solid #E7E3D8; border-radius: 8px; padding: 7px 9px; font-size: 13px;
+  }
+  .settings-body input:focus { outline: none; border-color: #2E6B57; }
+  details.connected summary { color: #66746D; }
+  details.connected summary::after { content: " · connected ✓"; color: #2E6B57; }
 </style>
 </head>
 <body>
@@ -46,12 +55,21 @@
   <p class="sub">Profiles you saved while browsing LinkedIn.</p>
   <div id="list"></div>
   <div class="actions">
-    <button class="act primary" id="copy">Copy JSON</button>
-    <button class="act" id="download">Download</button>
+    <button class="act primary" id="send">Send to Hearth</button>
+    <button class="act" id="copy">Copy JSON</button>
     <button class="act" id="clear">Clear</button>
   </div>
   <div id="status"></div>
-  <p class="note">In Hearth: LinkedIn / CSV import → paste the JSON (or pick the downloaded file). Captures are removed here after you clear them.</p>
+  <details id="settings">
+    <summary>Connect to Hearth</summary>
+    <div class="settings-body">
+      <input id="set-url" type="url" placeholder="https://your-hearth.vercel.app" />
+      <input id="set-pass" type="password" placeholder="Workspace passphrase" />
+      <button class="act primary" id="save-settings">Save connection</button>
+      <p class="note">Once connected, captures send themselves — no copy/paste. A "Review captures" button appears in Hearth's sidebar.</p>
+    </div>
+  </details>
+  <p class="note">Not connected? <span id="dl-fallback" style="text-decoration:underline;cursor:pointer">Download JSON</span> and import it in Hearth manually.</p>
   <script src="popup.js"></script>
 </body>
 </html>

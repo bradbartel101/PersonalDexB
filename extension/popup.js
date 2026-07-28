@@ -54,7 +54,7 @@ document.getElementById("copy").addEventListener("click", async () => {
   status("Copied — paste it into Hearth");
 });
 
-document.getElementById("download").addEventListener("click", async () => {
+document.getElementById("dl-fallback").addEventListener("click", async () => {
   const people = await getCaptured();
   if (!people.length) return status("Nothing to download");
   const a = document.createElement("a");
@@ -69,4 +69,37 @@ document.getElementById("clear").addEventListener("click", async () => {
   render();
 });
 
+document.getElementById("send").addEventListener("click", () => {
+  chrome.runtime.sendMessage({ type: "sendQueue" }, (resp) => {
+    if (!resp || resp.error) status(resp && resp.error === 401 ? "Wrong passphrase" : "Couldn't reach Hearth — check the connection below");
+    else if (resp.skipped) status("Set up the connection below first");
+    else { status(resp.sent ? "Sent " + resp.sent + " to Hearth ✓" : "Queue is empty"); render(); }
+  });
+});
+
+async function loadSettings() {
+  const { settings } = await chrome.storage.local.get("settings");
+  const details = document.getElementById("settings");
+  if (settings && settings.url) {
+    document.getElementById("set-url").value = settings.url;
+    document.getElementById("set-pass").value = settings.pass || "";
+    details.classList.add("connected");
+  } else {
+    details.open = true;
+  }
+}
+
+document.getElementById("save-settings").addEventListener("click", async () => {
+  const url = document.getElementById("set-url").value.trim();
+  const pass = document.getElementById("set-pass").value;
+  if (!url || !pass) return status("Need both the site address and passphrase");
+  let origin;
+  try { origin = new URL(url).origin; } catch (e) { return status("That address doesn't look like a URL"); }
+  await chrome.storage.local.set({ settings: { url: origin, pass } });
+  document.getElementById("settings").classList.add("connected");
+  status("Connected — captures will send automatically");
+  chrome.runtime.sendMessage({ type: "sendQueue" }, () => render());
+});
+
+loadSettings();
 render();

@@ -11,7 +11,42 @@ function toBase64(buf) {
   return btoa(out);
 }
 
+// Direct send: when the user has connected the extension to their hosted
+// Hearth (URL + passphrase in settings), captures POST straight to the app's
+// /api/captures queue. The API allows cross-origin requests, so no extra
+// host permissions are needed.
+async function sendQueue() {
+  const { settings, captured = [] } = await chrome.storage.local.get(["settings", "captured"]);
+  if (!settings || !settings.url || !settings.pass) return { skipped: true };
+  if (!captured.length) return { sent: 0 };
+  try {
+    const r = await fetch(new URL("api/captures", settings.url.replace(/\/?$/, "/")), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer " + settings.pass,
+      },
+      body: JSON.stringify({ people: captured }),
+    });
+    if (!r.ok) return { error: r.status };
+    await chrome.storage.local.set({ captured: [], lastSent: Date.now() });
+    return { sent: captured.length };
+  } catch (e) {
+    return { error: "network" };
+  }
+}
+
+let sendTimer = null;
+function scheduleSend() {
+  clearTimeout(sendTimer);
+  sendTimer = setTimeout(sendQueue, 1200);
+}
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg && msg.type === "sendQueue") {
+    sendQueue().then(sendResponse);
+    return true;
+  }
   if (msg && msg.type === "fetchImage" && typeof msg.url === "string") {
     fetch(msg.url, { credentials: "omit" })
       .then((r) => {
@@ -34,7 +69,11 @@ async function updateBadge() {
 }
 
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "local" && changes.captured) updateBadge();
+  if (area === "local" && changes.captured) {
+    updateBadge();
+    const grew = (changes.captured.newValue || []).length > (changes.captured.oldValue || []).length;
+    if (grew) scheduleSend();
+  }
 });
 chrome.runtime.onInstalled.addListener(updateBadge);
 chrome.runtime.onStartup.addListener(updateBadge);

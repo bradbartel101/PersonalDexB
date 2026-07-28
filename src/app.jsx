@@ -1314,6 +1314,10 @@ function peopleFromCapture(text) {
   const arr = j && j.hearth === "linkedin-capture" && Array.isArray(j.people) ? j.people
     : Array.isArray(j) ? j : null;
   if (!arr) return null;
+  return draftsFromCaptures(arr);
+}
+
+function draftsFromCaptures(arr) {
   return arr.filter((p) => p && typeof p.name === "string" && p.name.trim()).map((p) => {
     const c = blankContact(p.name);
     let role = typeof p.role === "string" ? p.role : "";
@@ -1362,6 +1366,35 @@ function shrinkDataUri(uri, max = 160) {
   });
 }
 
+/* ---- cloud sync (talks to /api when the app is served from a host that has one) ---- */
+
+const HTTP = typeof location !== "undefined" && /^https?:$/.test(location.protocol);
+const PASS_KEY = KEY + ":pass";
+const POLL_MS = (() => {
+  try {
+    const p = new URLSearchParams(location.search).get("pollms");
+    return p ? Math.max(800, +p) : 25000;
+  } catch (e) { return 25000; }
+})();
+
+async function apiCall(path, opts = {}, pass) {
+  try {
+    const r = await fetch(path, {
+      ...opts,
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer " + (pass || ""),
+        ...(opts.headers || {}),
+      },
+    });
+    let json = null;
+    try { json = await r.json(); } catch (e) { /* non-JSON (e.g. a 404 page) */ }
+    return { status: r.status, json };
+  } catch (e) {
+    return { status: 0, json: null };
+  }
+}
+
 /* ============================== app ============================== */
 
 function normalizeData(raw) {
@@ -1404,6 +1437,89 @@ function App() {
   const capRef = useRef(null);
   const toastTimer = useRef(null);
 
+  /* ---- cloud sync state ---- */
+  const [syncState, setSyncState] = useState(HTTP ? "probing" : "off");
+  const [passDraft, setPassDraft] = useState("");
+  const [pendingCaps, setPendingCaps] = useState([]);
+  const passRef = useRef(null);
+  const versionRef = useRef(0);
+  const skipPushRef = useRef(false);
+  const pendingPushRef = useRef(false);
+  const pushTimer = useRef(null);
+  const dataRef = useRef(null);
+  useEffect(() => { dataRef.current = data; }, [data]);
+
+  const pushRemote = useCallback(async (doc, retried) => {
+    const { status, json } = await apiCall("api/data", {
+      method: "PUT",
+      body: JSON.stringify({ version: versionRef.current, doc }),
+    }, passRef.current);
+    pendingPushRef.current = false;
+    if (status === 200 && json && typeof json.version === "number") {
+      versionRef.current = json.version;
+      setSyncState("synced");
+    } else if (status === 409 && json && typeof json.version === "number" && !retried) {
+      versionRef.current = json.version; // last write wins from the active device
+      pendingPushRef.current = true;
+      return pushRemote(doc, true);
+    } else if (status === 401) setSyncState("badpass");
+    else setSyncState("error");
+  }, []);
+
+  const pullCaptures = useCallback(async () => {
+    const { status, json } = await apiCall("api/captures", {}, passRef.current);
+    if (status === 200 && json && Array.isArray(json.people)) setPendingCaps(json.people);
+  }, []);
+
+  const probeSync = useCallback(async (pass, bootDoc) => {
+    if (!HTTP) return;
+    setSyncState("probing");
+    const { status, json } = await apiCall("api/data", {}, pass || "");
+    if (status === 401) setSyncState(pass ? "badpass" : "needpass");
+    else if (status === 503) setSyncState("unconfigured");
+    else if (status === 200 && json && typeof json.version === "number") {
+      if (json.doc) {
+        const parsed = normalizeData(json.doc);
+        versionRef.current = json.version;
+        if (parsed) { skipPushRef.current = true; setData(parsed); }
+      } else {
+        versionRef.current = json.version;
+        const seed = bootDoc || dataRef.current;
+        if (seed) { pendingPushRef.current = true; pushRemote(seed); }
+      }
+      setSyncState("synced");
+      pullCaptures();
+    } else setSyncState("off");
+  }, [pushRemote, pullCaptures]);
+
+  const connectSync = useCallback((pass) => {
+    const p = pass.trim();
+    if (!p) return;
+    passRef.current = p;
+    try { localStorage.setItem(PASS_KEY, p); } catch (e) { /* memory-only */ }
+    setPassDraft("");
+    probeSync(p);
+  }, [probeSync]);
+
+  /* poll for remote changes + extension captures */
+  useEffect(() => {
+    if (syncState !== "synced") return;
+    const id = setInterval(async () => {
+      if (pendingPushRef.current || document.hidden) return;
+      const { status, json } = await apiCall("api/data", {}, passRef.current);
+      if (status === 200 && json && json.version > versionRef.current && json.doc) {
+        const parsed = normalizeData(json.doc);
+        if (parsed && !pendingPushRef.current) {
+          versionRef.current = json.version;
+          skipPushRef.current = true;
+          setData(parsed);
+        }
+      } else if (status === 401) setSyncState("badpass");
+      pullCaptures();
+    }, POLL_MS);
+    return () => clearInterval(id);
+  }, [syncState, pullCaptures]);
+
   const toast = useCallback((msg) => {
     setToastState({ msg });
     clearTimeout(toastTimer.current);
@@ -1419,7 +1535,12 @@ function App() {
       setMode(storageMode);
       let parsed = null;
       if (raw) { try { parsed = normalizeData(JSON.parse(raw)); } catch (e) { /* corrupted — reseed */ } }
-      setData(parsed || seedData());
+      const boot = parsed || seedData();
+      setData(boot);
+      let pass = null;
+      try { pass = localStorage.getItem(PASS_KEY); } catch (e) { /* unavailable */ }
+      passRef.current = pass;
+      probeSync(pass, boot);
     })();
     return () => { alive = false; };
   }, []);
@@ -1430,6 +1551,13 @@ function App() {
     if (!data) return;
     if (!loadedRef.current) { loadedRef.current = true; persist(JSON.stringify(data)); return; }
     const t = setTimeout(() => persist(JSON.stringify(data)), 300);
+    // Remote push, unless this change *came from* the server (skipPushRef).
+    if (skipPushRef.current) skipPushRef.current = false;
+    else if (syncState === "synced" || syncState === "error") {
+      pendingPushRef.current = true;
+      clearTimeout(pushTimer.current);
+      pushTimer.current = setTimeout(() => pushRemote(data), 800);
+    }
     return () => clearTimeout(t);
   }, [data]);
 
@@ -1698,6 +1826,10 @@ function App() {
       const groups = group && !d.groups.includes(group) ? [...d.groups, group] : d.groups;
       return { ...d, contacts: list, groups };
     });
+    if (review.source === "cloud") {
+      apiCall("api/captures", { method: "DELETE" }, passRef.current).catch(() => {});
+      setPendingCaps([]);
+    }
     setReview(null);
     setLiOpen(false);
     setRoute({ name: "people" });
@@ -1751,6 +1883,33 @@ function App() {
           </button>
         </nav>
         <div className="rail-spacer" />
+        {HTTP && syncState !== "off" && (
+          <div className="rail-sync">
+            {syncState === "synced" && <div className="sync-line ok"><span className="dot" />Synced · shared workspace</div>}
+            {syncState === "probing" && <div className="sync-line"><span className="dot wait" />Checking sync…</div>}
+            {syncState === "error" && <div className="sync-line err"><span className="dot" />Sync hiccup — retrying on next change</div>}
+            {syncState === "unconfigured" && (
+              <div className="sync-line">Sync server needs a HEARTH_PASSPHRASE env var</div>
+            )}
+            {(syncState === "needpass" || syncState === "badpass") && (
+              <form onSubmit={(e) => { e.preventDefault(); connectSync(passDraft); }}>
+                <div className={"sync-line" + (syncState === "badpass" ? " err" : "")}>
+                  {syncState === "badpass" ? "Wrong passphrase — try again" : "Enter the workspace passphrase to sync"}
+                </div>
+                <input type="password" className="sync-pass" placeholder="Workspace passphrase"
+                  value={passDraft} onChange={(e) => setPassDraft(e.target.value)} />
+                <button className="btn primary sm" type="submit" disabled={!passDraft.trim()}>Connect</button>
+              </form>
+            )}
+          </div>
+        )}
+        {pendingCaps.length > 0 && (
+          <button className="rail-tool cap-alert"
+            onClick={() => openReview(draftsFromCaptures(pendingCaps), "cloud")}>
+            <Icon n="users" size={15} />
+            <span>Review {pendingCaps.length} LinkedIn capture{pendingCaps.length === 1 ? "" : "s"}</span>
+          </button>
+        )}
         <div className="rail-stats">
           <div className="rail-stat"><span>In your circle</span><b>{stats.total}</b></div>
           <div className="rail-stat"><span>Overdue</span><b className={stats.overdue ? "hot" : ""}>{stats.overdue}</b></div>
@@ -1827,13 +1986,20 @@ function App() {
                 <b> Save to Hearth</b>, then bring the captures here. Photos, headline, company, and
                 location come along, and existing people are updated in place.</p>
               <div className="li-actions">
-                <a className="btn sm" href={SITE_URL + "hearth-extension.zip"} download>
+                <a className="btn sm" href={HTTP ? "hearth-extension.zip" : SITE_URL + "hearth-extension.zip"} download>
                   <Icon n="download" size={14} />Get the extension
                 </a>
                 <button className="btn sm" onClick={() => capRef.current && capRef.current.click()}>
                   <Icon n="upload" size={14} />Import captured JSON…
                 </button>
               </div>
+              {syncState === "synced" && (
+                <p className="li-tip">
+                  Easiest path: open the extension popup once and paste this site's address plus your
+                  workspace passphrase under <b>Connect to Hearth</b>. From then on, "Save to Hearth" on
+                  LinkedIn sends people straight here — a review button appears in the sidebar.
+                </p>
+              )}
               <textarea className="li-paste" rows={3} value={pasteText}
                 placeholder='…or paste the JSON from the extension popup ("Copy JSON") here'
                 onChange={(e) => setPasteText(e.target.value)} />
