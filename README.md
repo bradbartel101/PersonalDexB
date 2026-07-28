@@ -20,6 +20,18 @@ Open app → **Today** shows who's overdue (by cadence + last interaction, most 
 - **Stats**: circle size, overdue count, quietest contact
 - Light + dark themes, keyboard shortcuts (`n`, `/`, `esc`)
 
+### Pro capabilities
+
+- **History**: a global feed of every interaction across all contacts, filterable by type
+- **Important dates**: per-contact recurring dates (anniversaries, traditions) that surface in the 30-day dashboard alongside birthdays and reminders
+- **Starred contacts**: star from the list or profile, filter to starred
+- **Archiving**: hide people from Today, People, and stats without deleting their history
+- **Bulk actions**: select multiple contacts and tag, group, set cadence, star, archive, or delete in one pass
+- **Merge duplicates**: finds entries sharing a name or email and merges fields, tags, notes, and full timelines into the fullest entry
+- **Sorting**: A–Z, recently touched, or most overdue
+- **Quick actions**: one-click `mailto:` / `tel:` from profile fields
+- **Relationship insights**: interactions logged and typical gap between them, per contact
+
 ## Persistence
 
 A storage adapter prefers the artifact storage API (`window.storage`) when the host provides it, falls back to `localStorage`, and degrades to in-memory with a visible warning banner (plus export/restore) when neither is available. JSON export uses the artifact `downloads` capability when present, with an anchor-download fallback.

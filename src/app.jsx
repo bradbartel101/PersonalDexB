@@ -49,6 +49,11 @@ const PATHS = {
   users: <><circle cx="9" cy="8.5" r="3.5" /><path d="M3.5 20c.5-4 2.7-6 5.5-6s5 2 5.5 6M16 5.4a3.5 3.5 0 0 1 0 6.2M17.7 14.6c1.8 1 2.7 3 2.9 5.4" /></>,
   today: <><rect x="3.5" y="5" width="17" height="15.5" rx="2.5" /><path d="M3.5 9.5h17M8 3v4M16 3v4M8 14h4" /></>,
   broom: <path d="M14 3 9.5 7.5m0 0 7 7M9.5 7.5c-4 4-6.5 5-6.5 5l8 8s1-2.5 5-6.5M6 15.5 4 21m4.5-3L7 21.5m4.5-3.5-1 3.5" />,
+  star: <path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8L3.5 9.7l5.9-.9L12 3.5z" />,
+  archive: <><rect x="3" y="4" width="18" height="4.5" rx="1" /><path d="M5 8.5V19a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8.5M10 12.5h4" /></>,
+  history: <path d="M3.5 12a8.5 8.5 0 1 0 2.5-6L3.5 8.5m0-4.5v4.5H8M12 8v4.5l3 2" />,
+  merge: <path d="M7 4h4v4H7zM13 16h4v4h-4zM9 8v4a4 4 0 0 0 4 4M9 12h.01" />,
+  calendar: <><rect x="3.5" y="5" width="17" height="15.5" rx="2.5" /><path d="M3.5 9.5h17M8 3v4M16 3v4" /></>,
 };
 
 function Icon({ n, size = 16 }) {
@@ -222,8 +227,8 @@ function seedData() {
   const C = (o) => ({
     id: uid(), name: "", context: "", email: "", phone: "", company: "", role: "",
     location: "", birthday: "", photo: null, notes: "", tags: [], groups: [],
-    custom: [], reminders: [], interactions: [], cadence: { id: "none", days: null },
-    snoozedUntil: null, createdAt: d(400), sample: true, ...o,
+    custom: [], reminders: [], dates: [], interactions: [], cadence: { id: "none", days: null },
+    snoozedUntil: null, starred: false, archived: false, createdAt: d(400), sample: true, ...o,
   });
   return {
     v: 1,
@@ -234,7 +239,7 @@ function seedData() {
         name: "Maya Chen", context: "College roommate at Berkeley",
         email: "maya@hey.com", company: "Figma", role: "Product Designer", location: "San Francisco",
         birthday: bday(12, 31), tags: ["berkeley", "design", "hiking"], groups: ["Close Friends"],
-        cadence: { id: "monthly" },
+        cadence: { id: "monthly" }, starred: true,
         custom: [{ id: uid(), label: "Instagram", value: "@mayadraws" }],
         notes: "Thinking about leaving Figma to freelance. Loves Sightglass. Training for a half marathon in October.",
         interactions: [
@@ -245,7 +250,7 @@ function seedData() {
       C({
         name: "Grandma June", context: "Mom's side — calls every Sunday if I don't first",
         phone: "(555) 201-4477", location: "Tucson, AZ", birthday: bday(25, 84),
-        tags: ["family"], groups: ["Family"], cadence: { id: "weekly" },
+        tags: ["family"], groups: ["Family"], cadence: { id: "weekly" }, starred: true,
         notes: "New hip doing great. Ask about the garden — the tomatoes are her pride this year.",
         interactions: [
           { id: uid(), type: "call", date: d(5), text: "Long call about the garden and cousin Pete's wedding plans." },
@@ -279,6 +284,7 @@ function seedData() {
         name: "Priya Sharma", context: "Former teammate at Stripe, my first mentor",
         email: "priya.sh@gmail.com", company: "Anthropic", role: "Eng Manager", location: "San Francisco",
         tags: ["stripe", "mentor"], groups: ["Work"], cadence: { id: "quarterly" },
+        dates: [{ id: uid(), label: "Stripe reunion dinner", date: bday(20, 5) }],
         notes: "Best career advice I've ever gotten. Owes me a book rec; I owe her dinner.",
         interactions: [
           { id: uid(), type: "coffee", date: d(30), text: "Blue Bottle — talked through the co-founder question. 'Hire for what you're bad at.'" },
@@ -324,9 +330,42 @@ function blankContact(name) {
   return {
     id: uid(), name: name.trim(), context: "", email: "", phone: "", company: "",
     role: "", location: "", birthday: "", photo: null, notes: "", tags: [], groups: [],
-    custom: [], reminders: [], interactions: [], cadence: { id: "none", days: null },
-    snoozedUntil: null, createdAt: iso(todayMid()), sample: false,
+    custom: [], reminders: [], dates: [], interactions: [], cadence: { id: "none", days: null },
+    snoozedUntil: null, starred: false, archived: false, createdAt: iso(todayMid()), sample: false,
   };
+}
+
+/* median days between interactions, for the relationship insight line */
+function typicalGap(c) {
+  const ds = (c.interactions || []).map((i) => i.date).sort();
+  if (ds.length < 2) return null;
+  const gaps = [];
+  for (let i = 1; i < ds.length; i++) {
+    const a = parseDate(ds[i - 1]), b = parseDate(ds[i]);
+    if (a && b) gaps.push(Math.round((b - a) / DAY));
+  }
+  if (!gaps.length) return null;
+  gaps.sort((a, b) => a - b);
+  return gaps[Math.floor(gaps.length / 2)];
+}
+
+function findDuplicates(contacts) {
+  const byKey = {};
+  for (const c of contacts) {
+    const keys = [];
+    const n = (c.name || "").trim().toLowerCase().replace(/\s+/g, " ");
+    if (n) keys.push("n:" + n);
+    const e = (c.email || "").trim().toLowerCase();
+    if (e) keys.push("e:" + e);
+    for (const k of keys) (byKey[k] = byKey[k] || new Set()).add(c.id);
+  }
+  const groups = [], seen = new Set();
+  for (const ids of Object.values(byKey)) {
+    if (ids.size < 2) continue;
+    const key = [...ids].sort().join("|");
+    if (!seen.has(key)) { seen.add(key); groups.push([...ids]); }
+  }
+  return groups;
 }
 
 /* ============================== small components ============================== */
@@ -467,6 +506,13 @@ function TodayView({ contacts, openProfile, logInteraction, snooze, completeRemi
         const n = daysFromToday(r.date);
         if (n != null && n <= 30) items.push({ kind: "reminder", c, r, when: n, date: r.date, title: r.text });
       }
+      for (const dt of c.dates || []) {
+        const occ = nextBirthday(dt.date);
+        if (!occ) continue;
+        const n = Math.round((occ.date - today) / DAY);
+        if (n >= 0 && n <= 30)
+          items.push({ kind: "date", c, when: n, date: iso(occ.date), title: dt.label + " · " + c.name });
+      }
     }
     return items.sort((a, b) => a.when - b.when);
   }, [contacts, today]);
@@ -547,14 +593,14 @@ function TodayView({ contacts, openProfile, logInteraction, snooze, completeRemi
           {upcoming.map((u, i) => (
             <div key={i} className="up-row">
               <div className={"up-icon" + (u.kind === "reminder" ? " bell" : "")}>
-                <Icon n={u.kind === "birthday" ? "cake" : "bell"} size={17} />
+                <Icon n={u.kind === "birthday" ? "cake" : u.kind === "date" ? "calendar" : "bell"} size={17} />
               </div>
               <div className="up-body">
                 <div className="up-title">
-                  {u.kind === "birthday"
-                    ? <button onClick={() => openProfile(u.c.id)}>{u.title}</button>
-                    : <>{u.title} <span style={{ fontWeight: 400, color: "var(--muted)" }}>· </span>
-                      <button onClick={() => openProfile(u.c.id)} style={{ color: "var(--muted)", fontWeight: 500 }}>{u.c.name}</button></>}
+                  {u.kind === "reminder"
+                    ? <>{u.title} <span style={{ fontWeight: 400, color: "var(--muted)" }}>· </span>
+                      <button onClick={() => openProfile(u.c.id)} style={{ color: "var(--muted)", fontWeight: 500 }}>{u.c.name}</button></>
+                    : <button onClick={() => openProfile(u.c.id)}>{u.title}</button>}
                 </div>
                 <div className="up-sub">{fmtShort(u.date)}{u.when < 0 ? " · " + (-u.when) + "d ago" : ""}</div>
               </div>
@@ -574,14 +620,28 @@ function TodayView({ contacts, openProfile, logInteraction, snooze, completeRemi
 
 /* ============================== people view ============================== */
 
-function PeopleView({ contacts, groups, prefs, setPrefs, openProfile, addContact, focusSignal }) {
+function PeopleView({ contacts, groups, prefs, setPrefs, openProfile, addContact, focusSignal, toggleStar, bulkApply }) {
   const [q, setQ] = useState("");
   const [group, setGroup] = useState("");
   const [tag, setTag] = useState("");
   const [status, setStatus] = useState("");
+  const [show, setShow] = useState("active");
+  const [sort, setSort] = useState("name");
   const [newName, setNewName] = useState("");
+  const [bulk, setBulk] = useState(false);
+  const [sel, setSel] = useState(() => new Set());
+  const [bulkTag, setBulkTag] = useState("");
+  const [bulkGroup, setBulkGroup] = useState("");
+  const [bulkCadence, setBulkCadence] = useState("");
   const searchRef = useRef(null);
   const addRef = useRef(null);
+
+  const toggleSel = (id) => setSel((s) => {
+    const next = new Set(s);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+  const exitBulk = () => { setBulk(false); setSel(new Set()); };
 
   useEffect(() => {
     if (!focusSignal) return;
@@ -597,21 +657,29 @@ function PeopleView({ contacts, groups, prefs, setPrefs, openProfile, addContact
 
   const shown = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    return contacts
+    const list = contacts
       .map((c) => ({ c, info: dueInfo(c) }))
       .filter(({ c, info }) => {
+        if (show === "active" && c.archived) return false;
+        if (show === "starred" && (!c.starred || c.archived)) return false;
+        if (show === "archived" && !c.archived) return false;
         if (group && !(c.groups || []).includes(group)) return false;
         if (tag && !(c.tags || []).includes(tag)) return false;
         if (status && info.status !== status) return false;
         if (needle) {
           const hay = [c.name, c.company, c.role, c.context, c.email, c.location, c.notes,
-            (c.tags || []).join(" "), (c.groups || []).join(" ")].join(" ").toLowerCase();
+            (c.tags || []).join(" "), (c.groups || []).join(" "),
+            (c.custom || []).map((f) => f.label + " " + f.value).join(" ")].join(" ").toLowerCase();
           if (!hay.includes(needle)) return false;
         }
         return true;
-      })
-      .sort((a, b) => a.c.name.localeCompare(b.c.name));
-  }, [contacts, q, group, tag, status]);
+      });
+    if (sort === "recent") list.sort((a, b) => (b.info.last || "").localeCompare(a.info.last || ""));
+    else if (sort === "overdue") list.sort((a, b) =>
+      (b.info.overdueDays ?? -99999) - (a.info.overdueDays ?? -99999));
+    else list.sort((a, b) => a.c.name.localeCompare(b.c.name));
+    return list;
+  }, [contacts, q, group, tag, status, show, sort]);
 
   const submitNew = (e) => {
     e.preventDefault();
@@ -627,7 +695,13 @@ function PeopleView({ contacts, groups, prefs, setPrefs, openProfile, addContact
     <div className="page">
       <header className="page-head">
         <h1 className="page-title display">People</h1>
-        <p className="page-sub">{contacts.length} {contacts.length === 1 ? "person" : "people"} in your circle</p>
+        <p className="page-sub">
+          {(() => {
+            const active = contacts.filter((c) => !c.archived).length;
+            const arch = contacts.length - active;
+            return active + (active === 1 ? " person" : " people") + " in your circle" + (arch ? " · " + arch + " archived" : "");
+          })()}
+        </p>
       </header>
 
       <div className="quickadd">
@@ -661,6 +735,17 @@ function PeopleView({ contacts, groups, prefs, setPrefs, openProfile, addContact
           <option value="ok">On track</option>
           <option value="none">No cadence</option>
         </select>
+        <select className={"select" + (show !== "active" ? " active" : "")} value={show} onChange={(e) => setShow(e.target.value)}>
+          <option value="active">Active</option>
+          <option value="starred">Starred</option>
+          <option value="archived">Archived</option>
+          <option value="all">Everyone</option>
+        </select>
+        <select className="select" value={sort} onChange={(e) => setSort(e.target.value)} title="Sort">
+          <option value="name">A–Z</option>
+          <option value="recent">Recently touched</option>
+          <option value="overdue">Most overdue</option>
+        </select>
         {(group || tag || status) && (
           <button className="btn ghost sm" onClick={() => { setGroup(""); setTag(""); setStatus(""); }}>Clear</button>
         )}
@@ -668,6 +753,11 @@ function PeopleView({ contacts, groups, prefs, setPrefs, openProfile, addContact
           <button className={"icon-btn" + (!grid ? " on" : "")} title="List" onClick={() => setPrefs({ view: "list" })}><Icon n="list" size={16} /></button>
           <button className={"icon-btn" + (grid ? " on" : "")} title="Grid" onClick={() => setPrefs({ view: "grid" })}><Icon n="grid" size={16} /></button>
         </div>
+        {!grid && (
+          <button className={"btn sm" + (bulk ? " primary" : "")} onClick={() => (bulk ? exitBulk() : setBulk(true))}>
+            {bulk ? "Done" : "Select"}
+          </button>
+        )}
       </div>
 
       {shown.length === 0 ? (
@@ -703,19 +793,62 @@ function PeopleView({ contacts, groups, prefs, setPrefs, openProfile, addContact
             return (
               <div key={c.id} className="person-row">
                 <div className="person-row-main">
+                  {bulk && (
+                    <input type="checkbox" className="row-check" checked={sel.has(c.id)}
+                      onChange={() => toggleSel(c.id)} aria-label={"Select " + c.name} />
+                  )}
                   <Avatar c={c} size={40} />
                   <div className="person-row-info">
-                    <button className="person-name" onClick={() => openProfile(c.id)}>{c.name}</button>
+                    <button className="person-name" onClick={() => (bulk ? toggleSel(c.id) : openProfile(c.id))}>{c.name}</button>
                     <div className="person-meta">{sub || "—"}</div>
                   </div>
                   <div className="person-side">
+                    {c.archived && <span className="chip">archived</span>}
                     {(c.tags || []).slice(0, 2).map((t) => <span key={t} className="chip">{t}</span>)}
                     {pill ? <span className={"pill " + pill.cls}>{pill.text}</span> : <span className="pill none">no cadence</span>}
+                    <button className={"icon-btn star" + (c.starred ? " on" : "")} title={c.starred ? "Unstar" : "Star"}
+                      onClick={() => toggleStar(c.id)}>
+                      <Icon n="star" size={15} />
+                    </button>
                   </div>
                 </div>
               </div>
             );
           })}
+        </div>
+      )}
+
+      {bulk && !grid && (
+        <div className="card bulkbar">
+          <span className="bulk-count">{sel.size} selected</span>
+          <button className="btn ghost sm" onClick={() => setSel(new Set(shown.map((x) => x.c.id)))}>All</button>
+          <button className="btn ghost sm" onClick={() => setSel(new Set())}>None</button>
+          <span className="bulk-sep" />
+          <input className="bulk-input" placeholder="tag…" value={bulkTag} onChange={(e) => setBulkTag(e.target.value)} />
+          <button className="btn sm" disabled={!bulkTag.trim() || !sel.size}
+            onClick={() => { bulkApply([...sel], "tag", bulkTag.trim().toLowerCase()); setBulkTag(""); }}>Tag</button>
+          <select className="select" value={bulkGroup} onChange={(e) => setBulkGroup(e.target.value)}>
+            <option value="">Group…</option>
+            {groups.map((g) => <option key={g} value={g}>{g}</option>)}
+          </select>
+          <button className="btn sm" disabled={!bulkGroup || !sel.size}
+            onClick={() => { bulkApply([...sel], "group", bulkGroup); setBulkGroup(""); }}>Add</button>
+          <select className="select" value={bulkCadence} onChange={(e) => setBulkCadence(e.target.value)}>
+            <option value="">Cadence…</option>
+            {CADENCES.filter((x) => x.id !== "custom").map((x) => <option key={x.id} value={x.id}>{x.label}</option>)}
+          </select>
+          <button className="btn sm" disabled={!bulkCadence || !sel.size}
+            onClick={() => { bulkApply([...sel], "cadence", bulkCadence); setBulkCadence(""); }}>Set</button>
+          <span className="bulk-sep" />
+          <button className="btn sm" disabled={!sel.size} onClick={() => bulkApply([...sel], "star")}>
+            <Icon n="star" size={13} />Star
+          </button>
+          <button className="btn sm" disabled={!sel.size}
+            onClick={() => { bulkApply([...sel], "archive"); setSel(new Set()); }}>
+            <Icon n="archive" size={13} />Archive
+          </button>
+          <ConfirmButton className="btn sm danger" label="Delete" confirmLabel={"Delete " + sel.size + "?"}
+            onConfirm={() => { if (sel.size) { bulkApply([...sel], "delete"); exitBulk(); } }} />
         </div>
       )}
     </div>
@@ -739,6 +872,8 @@ function ProfileView({ contact: c, groups, back, update, remove, logInteraction,
   const [addingField, setAddingField] = useState(false);
   const [remDate, setRemDate] = useState(iso(todayMid()));
   const [remText, setRemText] = useState("");
+  const [dateLabel, setDateLabel] = useState("");
+  const [dateVal, setDateVal] = useState("");
   const fileRef = useRef(null);
   const info = dueInfo(c);
   const pill = duePill(info);
@@ -820,9 +955,18 @@ function ProfileView({ contact: c, groups, back, update, remove, logInteraction,
           {info.status !== "none" && (
             <button className="btn sm" onClick={() => snooze(c.id, 7)}><Icon n="clock" size={14} />Snooze 7d</button>
           )}
+          <button className={"btn sm" + (c.starred ? " star-on" : "")} onClick={() => set({ starred: !c.starred })}>
+            <Icon n="star" size={14} />{c.starred ? "Starred" : "Star"}
+          </button>
+          <button className="btn sm" onClick={() => set({ archived: !c.archived })}>
+            <Icon n="archive" size={14} />{c.archived ? "Unarchive" : "Archive"}
+          </button>
           <ConfirmButton className="btn ghost sm danger" label="Delete" confirmLabel="Really delete?"
             onConfirm={() => remove(c.id)} />
         </div>
+        {c.archived && (
+          <div className="profile-archived">Archived — hidden from Today, People, and stats until you unarchive.</div>
+        )}
       </div>
 
       <div className="card pcard">
@@ -847,6 +991,7 @@ function ProfileView({ contact: c, groups, back, update, remove, logInteraction,
         <div className="cadence-status">
           <span>Last touch <b>{ago(info.last ? -daysFromToday(info.last) : null)}</b></span>
           {pill && <span className={"pill " + pill.cls}>{pill.text}</span>}
+          <span>· {(c.interactions || []).length} logged{typicalGap(c) ? ", usually every ~" + typicalGap(c) + "d" : ""}</span>
           {c.snoozedUntil && daysFromToday(c.snoozedUntil) > 0 && (
             <span>
               snoozed until {fmtShort(c.snoozedUntil)}{" "}
@@ -861,7 +1006,15 @@ function ProfileView({ contact: c, groups, back, update, remove, logInteraction,
         <div className="fields">
           {CORE_FIELDS.map((f) => (
             <div className="field" key={f.k}>
-              <label>{f.label}{f.k === "birthday" && nb && c.birthday ? " · " + inDays(Math.round((nb.date - todayMid()) / DAY)) : ""}</label>
+              <label>
+                {f.label}{f.k === "birthday" && nb && c.birthday ? " · " + inDays(Math.round((nb.date - todayMid()) / DAY)) : ""}
+                {f.k === "email" && c.email && (
+                  <a className="field-act" href={"mailto:" + c.email} title="Compose email"><Icon n="mail" size={12} /></a>
+                )}
+                {f.k === "phone" && c.phone && (
+                  <a className="field-act" href={"tel:" + c.phone.replace(/[^+\d]/g, "")} title="Call"><Icon n="phone" size={12} /></a>
+                )}
+              </label>
               <input type={f.type} value={c[f.k] || ""} placeholder={f.ph}
                 onChange={(e) => set({ [f.k]: e.target.value })} />
             </div>
@@ -931,6 +1084,40 @@ function ProfileView({ contact: c, groups, back, update, remove, logInteraction,
       </div>
 
       <div className="card pcard">
+        <h3 className="pcard-title">Important dates</h3>
+        {(c.dates || []).length === 0 && (
+          <p style={{ color: "var(--faint)", fontSize: 13.5, margin: 0 }}>
+            Anniversaries, kids' birthdays, yearly traditions — they recur every year and surface on your dashboard.
+          </p>
+        )}
+        {(c.dates || []).map((dt) => {
+          const occ = nextBirthday(dt.date);
+          return (
+            <div className="rem-row" key={dt.id}>
+              <span className="rem-date">{fmtShort(dt.date)}</span>
+              <span className="rem-text">{dt.label}</span>
+              {occ && <span className="rem-date">{inDays(Math.round((occ.date - todayMid()) / DAY))}</span>}
+              <button className="icon-btn" title="Remove date"
+                onClick={() => set({ dates: c.dates.filter((x) => x.id !== dt.id) })}>
+                <Icon n="x" size={14} />
+              </button>
+            </div>
+          );
+        })}
+        <form className="rem-add" onSubmit={(e) => {
+          e.preventDefault();
+          if (!dateLabel.trim() || !dateVal) return;
+          set({ dates: [...(c.dates || []), { id: uid(), label: dateLabel.trim(), date: dateVal }] });
+          setDateLabel(""); setDateVal("");
+        }}>
+          <input type="date" value={dateVal} onChange={(e) => setDateVal(e.target.value)} />
+          <input type="text" value={dateLabel} placeholder="Wedding anniversary, kid's birthday…"
+            onChange={(e) => setDateLabel(e.target.value)} />
+          <button className="btn sm" type="submit">Add</button>
+        </form>
+      </div>
+
+      <div className="card pcard">
         <div className="pcard-title-row">
           <h3 className="pcard-title">Timeline</h3>
           {!composing && (
@@ -968,6 +1155,69 @@ function ProfileView({ contact: c, groups, back, update, remove, logInteraction,
             </div>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+/* ============================== history view ============================== */
+
+function HistoryView({ contacts, openProfile }) {
+  const [type, setType] = useState("");
+  const entries = useMemo(() => {
+    const out = [];
+    for (const c of contacts) {
+      if (c.archived) continue;
+      for (const it of c.interactions || []) out.push({ c, it });
+    }
+    out.sort((a, b) => b.it.date.localeCompare(a.it.date));
+    return out;
+  }, [contacts]);
+  const shown = type ? entries.filter((e) => e.it.type === type) : entries;
+
+  return (
+    <div className="page">
+      <header className="page-head">
+        <h1 className="page-title display">History</h1>
+        <p className="page-sub">
+          {entries.length === 0 ? "Every interaction you log lands here." : entries.length + " interactions across everyone"}
+        </p>
+      </header>
+      <div className="type-chips" style={{ marginBottom: 16 }}>
+        <button className={"type-chip" + (!type ? " on" : "")} onClick={() => setType("")}>All</button>
+        {ITYPES.map((t) => (
+          <button key={t.id} className={"type-chip" + (type === t.id ? " on" : "")} onClick={() => setType(t.id)}>
+            <Icon n={t.icon} size={14} />{t.label}
+          </button>
+        ))}
+      </div>
+      <div className="card row-list">
+        {shown.length === 0 && (
+          <div className="empty">
+            <Icon n="history" size={28} />
+            <div className="display">Nothing here yet</div>
+            <p>Log an interaction from Today or a profile and it shows up in this feed.</p>
+          </div>
+        )}
+        {shown.slice(0, 200).map(({ c, it }) => {
+          const t = ITYPES.find((x) => x.id === it.type) || ITYPES[4];
+          return (
+            <div className="up-row" key={it.id}>
+              <Avatar c={c} size={36} />
+              <div className="up-body">
+                <div className="up-title">
+                  <button onClick={() => openProfile(c.id)}>{c.name}</button>
+                  <span className="hist-type"><Icon n={t.icon} size={12} />{t.label}</span>
+                </div>
+                {it.text && <div className="up-sub">{it.text}</div>}
+              </div>
+              <span className="up-when">{fmtLong(it.date)}</span>
+            </div>
+          );
+        })}
+        {shown.length > 200 && (
+          <div className="empty" style={{ padding: "14px" }}><p>Showing the latest 200 — filter by type to narrow down.</p></div>
+        )}
       </div>
     </div>
   );
@@ -1064,8 +1314,11 @@ function normalizeData(raw) {
     groups: Array.isArray(c.groups) ? c.groups : [],
     custom: Array.isArray(c.custom) ? c.custom : [],
     reminders: Array.isArray(c.reminders) ? c.reminders : [],
+    dates: Array.isArray(c.dates) ? c.dates : [],
     interactions: Array.isArray(c.interactions) ? c.interactions : [],
     cadence: c.cadence && c.cadence.id ? c.cadence : { id: "none", days: null },
+    starred: !!c.starred,
+    archived: !!c.archived,
   }));
   for (const c of data.contacts)
     for (const g of c.groups) if (!data.groups.includes(g)) data.groups.push(g);
@@ -1176,6 +1429,77 @@ function App() {
     setData((d) => (d.groups.includes(g) ? d : { ...d, groups: [...d.groups, g] }));
   }, []);
 
+  const toggleStar = useCallback((id) => {
+    setData((d) => ({ ...d, contacts: d.contacts.map((c) => (c.id === id ? { ...c, starred: !c.starred } : c)) }));
+  }, []);
+
+  const bulkApply = useCallback((ids, action, value) => {
+    const idSet = new Set(ids);
+    setData((d) => {
+      if (action === "delete") return { ...d, contacts: d.contacts.filter((c) => !idSet.has(c.id)) };
+      return {
+        ...d,
+        contacts: d.contacts.map((c) => {
+          if (!idSet.has(c.id)) return c;
+          if (action === "tag") return { ...c, sample: false, tags: [...new Set([...(c.tags || []), value])] };
+          if (action === "group") return { ...c, sample: false, groups: [...new Set([...(c.groups || []), value])] };
+          if (action === "cadence") {
+            const def = CADENCES.find((x) => x.id === value);
+            return { ...c, sample: false, cadence: { id: value, days: def ? def.days : null } };
+          }
+          if (action === "star") return { ...c, starred: true };
+          if (action === "archive") return { ...c, archived: true };
+          return c;
+        }),
+      };
+    });
+    const n = ids.length;
+    const verbs = {
+      tag: "Tagged " + n + ' with "' + value + '"', group: "Added " + n + " to " + value,
+      cadence: "Set " + n + " to " + value, star: "Starred " + n,
+      archive: "Archived " + n, delete: "Deleted " + n,
+    };
+    toast(verbs[action] || "Done");
+  }, [toast]);
+
+  const [dupOpen, setDupOpen] = useState(false);
+  const dupGroups = useMemo(() => (dupOpen ? findDuplicates(contacts) : []), [dupOpen, contacts]);
+
+  const mergeContacts = useCallback((ids) => {
+    setData((d) => {
+      const group = d.contacts.filter((c) => ids.includes(c.id));
+      if (group.length < 2) return d;
+      const target = group.reduce((a, b) =>
+        (b.interactions || []).length > (a.interactions || []).length ? b : a);
+      const merged = { ...target, sample: false };
+      for (const r of group) {
+        if (r.id === target.id) continue;
+        for (const k of ["context", "email", "phone", "company", "role", "location", "birthday", "photo"])
+          if (!merged[k]) merged[k] = r[k];
+        merged.notes = [merged.notes, r.notes].filter(Boolean).join("\n\n");
+        merged.tags = [...new Set([...(merged.tags || []), ...(r.tags || [])])];
+        merged.groups = [...new Set([...(merged.groups || []), ...(r.groups || [])])];
+        merged.custom = [
+          ...(merged.custom || []),
+          ...(r.custom || []).filter((cf) => !(merged.custom || []).some((m) => m.label === cf.label && m.value === cf.value)),
+        ];
+        merged.reminders = [...(merged.reminders || []), ...(r.reminders || [])];
+        merged.dates = [...(merged.dates || []), ...(r.dates || [])];
+        merged.interactions = [...(merged.interactions || []), ...(r.interactions || [])];
+        merged.starred = merged.starred || r.starred;
+        if ((merged.cadence || { id: "none" }).id === "none" && r.cadence && r.cadence.id !== "none")
+          merged.cadence = r.cadence;
+      }
+      return {
+        ...d,
+        contacts: d.contacts
+          .filter((c) => !ids.includes(c.id) || c.id === target.id)
+          .map((c) => (c.id === target.id ? merged : c)),
+      };
+    });
+    toast("Merged " + ids.length + " entries into one");
+  }, [toast]);
+
   /* export / import */
   const doExport = async () => {
     const payload = JSON.stringify({ ...data, exportedAt: new Date().toISOString() }, null, 2);
@@ -1248,8 +1572,10 @@ function App() {
 
   /* stats */
   const stats = useMemo(() => {
-    let overdue = 0, longest = null;
+    let overdue = 0, total = 0, longest = null;
     for (const c of contacts) {
+      if (c.archived) continue;
+      total++;
       const info = dueInfo(c);
       if (info.status === "overdue") overdue++;
       const last = lastContact(c);
@@ -1258,7 +1584,7 @@ function App() {
         if (!longest || n > longest.days) longest = { name: c.name.split(" ")[0], days: n };
       }
     }
-    return { total: contacts.length, overdue, longest };
+    return { total, overdue, longest };
   }, [contacts]);
 
   if (!data) return null;
@@ -1279,6 +1605,10 @@ function App() {
             <Icon n="users" size={17} />People
             <span className="nav-badge quiet">{stats.total}</span>
           </button>
+          <button className={"nav-btn" + (route.name === "history" ? " on" : "")}
+            onClick={() => setRoute({ name: "history" })}>
+            <Icon n="history" size={17} />History
+          </button>
         </nav>
         <div className="rail-spacer" />
         <div className="rail-stats">
@@ -1292,6 +1622,7 @@ function App() {
           <button className="rail-tool" onClick={doExport}><Icon n="download" size={15} /><span>Export backup</span></button>
           <button className="rail-tool" onClick={() => jsonRef.current && jsonRef.current.click()}><Icon n="upload" size={15} /><span>Restore JSON</span></button>
           <button className="rail-tool" onClick={() => csvRef.current && csvRef.current.click()}><Icon n="upload" size={15} /><span>Import CSV</span></button>
+          <button className="rail-tool" onClick={() => setDupOpen(true)}><Icon n="merge" size={15} /><span>Merge duplicates</span></button>
           {sampleCount > 0 && (
             <ConfirmButton className="rail-tool" label={<><Icon n="broom" size={15} /><span>Clear sample data</span></>}
               confirmLabel={<><Icon n="trash" size={15} /><span>Remove {sampleCount} samples?</span></>}
@@ -1313,7 +1644,7 @@ function App() {
           </div>
         )}
         {route.name === "today" && (
-          <TodayView contacts={contacts}
+          <TodayView contacts={contacts.filter((c) => !c.archived)}
             openProfile={(id) => setRoute({ name: "profile", id, from: "today" })}
             logInteraction={logInteraction} snooze={snooze} completeReminder={completeReminder} />
         )}
@@ -1321,7 +1652,12 @@ function App() {
           <PeopleView contacts={contacts} groups={data.groups} prefs={data.prefs}
             setPrefs={(p) => setData((d) => ({ ...d, prefs: { ...d.prefs, ...p } }))}
             openProfile={(id) => setRoute({ name: "profile", id, from: "people" })}
-            addContact={addContact} focusSignal={route.focus} />
+            addContact={addContact} focusSignal={route.focus}
+            toggleStar={toggleStar} bulkApply={bulkApply} />
+        )}
+        {route.name === "history" && (
+          <HistoryView contacts={contacts}
+            openProfile={(id) => setRoute({ name: "profile", id, from: "history" })} />
         )}
         {route.name === "profile" && (profileContact ? (
           <ProfileView contact={profileContact} groups={data.groups}
@@ -1335,6 +1671,42 @@ function App() {
       </main>
 
       <Toast toast={toastState} />
+
+      {dupOpen && (
+        <div className="overlay" onClick={() => setDupOpen(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3>Merge duplicates</h3>
+            {dupGroups.length === 0 ? (
+              <p>No duplicates found — every name and email is unique.</p>
+            ) : (
+              <p>These entries share a name or email. Merging keeps the fullest entry and combines fields, tags, notes, and complete timelines.</p>
+            )}
+            {dupGroups.map((ids, i) => (
+              <div className="dup-group" key={i}>
+                {ids.map((id) => {
+                  const c = contacts.find((x) => x.id === id);
+                  if (!c) return null;
+                  return (
+                    <div key={id} className="dup-row">
+                      <Avatar c={c} size={28} />
+                      <span>{c.name}</span>
+                      <span className="dup-meta">
+                        {[c.email, c.company, (c.interactions || []).length + " logged"].filter(Boolean).join(" · ")}
+                      </span>
+                    </div>
+                  );
+                })}
+                <button className="btn primary sm" onClick={() => mergeContacts(ids)}>
+                  <Icon n="merge" size={13} />Merge {ids.length}
+                </button>
+              </div>
+            ))}
+            <div className="modal-actions">
+              <button className="btn" onClick={() => setDupOpen(false)}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {exportText && (
         <div className="overlay" onClick={() => setExportText(null)}>

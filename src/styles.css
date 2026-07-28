@@ -482,6 +482,41 @@ button.chip:hover { background: var(--accent-soft); color: var(--accent); }
 .rem-add input[type="text"] { flex: 1; min-width: 140px; border: 1px solid var(--line); background: var(--card); border-radius: 8px; padding: 6px 10px; font-size: 13.5px; }
 .rem-add input:focus { outline: none; border-color: var(--accent); }
 
+/* ---------- pro: star, bulk, history, merge ---------- */
+.icon-btn.star.on { color: var(--soon); }
+.icon-btn.star.on svg { fill: currentColor; }
+.btn.star-on { color: var(--soon); border-color: var(--soon); }
+.btn.star-on svg { fill: currentColor; }
+.profile-archived {
+  margin: -10px 26px 20px; padding: 8px 14px; border-radius: 10px;
+  background: var(--line-soft); color: var(--muted); font-size: 13px;
+}
+.bulkbar {
+  position: sticky; bottom: 16px; z-index: 10;
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+  padding: 10px 14px; margin-top: 16px; box-shadow: var(--shadow-lift);
+}
+.bulk-count { font-weight: 600; font-size: 13px; font-variant-numeric: tabular-nums; }
+.bulk-sep { width: 1px; height: 20px; background: var(--line); }
+.bulk-input {
+  width: 90px; border: 1px solid var(--line); background: var(--card);
+  border-radius: 8px; padding: 5px 9px; font-size: 13px;
+}
+.bulk-input:focus { outline: none; border-color: var(--accent); }
+.row-check { width: 16px; height: 16px; accent-color: var(--accent); flex: 0 0 auto; cursor: pointer; }
+.hist-type {
+  display: inline-flex; align-items: center; gap: 4px; margin-left: 8px;
+  font-size: 12px; font-weight: 600; color: var(--accent);
+}
+.dup-group {
+  border: 1px solid var(--line); border-radius: 12px; padding: 12px;
+  margin-bottom: 10px; display: flex; flex-direction: column; gap: 8px; align-items: flex-start;
+}
+.dup-row { display: flex; align-items: center; gap: 8px; font-size: 13.5px; font-weight: 600; }
+.dup-meta { color: var(--muted); font-weight: 400; font-size: 12.5px; }
+.field-act { display: inline-flex; color: var(--accent); }
+.field-act:hover { color: var(--accent-hover); }
+
 /* ---------- toast & banner ---------- */
 .toast {
   position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
