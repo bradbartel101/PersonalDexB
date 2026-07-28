@@ -1,0 +1,19 @@
+{
+  "name": "hearth-personal-crm",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Hearth — a calm personal CRM built as a single self-contained HTML artifact",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node smoke.mjs"
+  },
+  "dependencies": {
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
+  },
+  "devDependencies": {
+    "esbuild": "^0.27.3",
+    "playwright-core": "^1.58.2"
+  }
+}
