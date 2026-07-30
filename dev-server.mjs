@@ -9,6 +9,15 @@ process.env.HEARTH_STORE_FILE = process.env.HEARTH_STORE_FILE || "./devstore.jso
 
 const { default: dataHandler } = await import("./api/data.js");
 const { default: capturesHandler } = await import("./api/captures.js");
+const { default: pushHandler } = await import("./api/push.js");
+const { default: notifyHandler } = await import("./api/notify.js");
+
+const STATIC = {
+  "/sw.js": ["public/sw.js", "text/javascript"],
+  "/manifest.webmanifest": ["public/manifest.webmanifest", "application/manifest+json"],
+  "/icon-192.png": ["public/icon-192.png", "image/png"],
+  "/icon-512.png": ["public/icon-512.png", "image/png"],
+};
 
 function vercelify(res) {
   res.status = (c) => { res.statusCode = c; return res; };
@@ -25,8 +34,19 @@ const server = http.createServer(async (req, res) => {
   try {
     if (url.pathname === "/api/data") return await dataHandler(req, res);
     if (url.pathname === "/api/captures") return await capturesHandler(req, res);
+    if (url.pathname === "/api/push") return await pushHandler(req, res);
+    if (url.pathname === "/api/notify") return await notifyHandler(req, res);
   } catch (e) {
     return res.status(500).json({ error: String(e.message || e) });
+  }
+
+  if (STATIC[url.pathname]) {
+    const [file, type] = STATIC[url.pathname];
+    try {
+      const buf = fs.readFileSync(file);
+      res.setHeader("Content-Type", type);
+      return res.end(buf);
+    } catch (e) { return res.status(404).json({ error: "missing " + file }); }
   }
 
   if (url.pathname === "/" || url.pathname === "/index.html") {

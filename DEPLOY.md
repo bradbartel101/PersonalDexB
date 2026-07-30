@@ -13,14 +13,17 @@ The repo is Vercel-ready: static app in `public/`, API in `api/`, config in `ver
 1. In the project: **Storage → Create Database → Upstash (Redis)** → free plan → **Connect**.
    This injects the Redis env vars (`KV_REST_API_URL`/`KV_REST_API_TOKEN` or `UPSTASH_REDIS_REST_*` — the API accepts either).
 
-## 3. Set the workspace passphrase
+## 3. Set the environment variables
 
 1. **Settings → Environment Variables** → add `HEARTH_PASSPHRASE` = a passphrase you choose (this is the whole login — make it long).
-2. **Deployments → ⋯ → Redeploy** so the env vars take effect.
+2. Add `CRON_SECRET` = any random string. Vercel automatically sends it with the daily cron that fires the reminder digest (`vercel.json` schedules `/api/notify` at 15:00 UTC ≈ 8am Pacific — edit the schedule there if you want a different hour).
+3. **Deployments → ⋯ → Redeploy** so the env vars take effect.
 
 ## 4. Use it
 
 - Open the site → the sidebar asks for the passphrase → enter it once per device (phone, iPad, laptop). Everyone with the URL + passphrase shares one live workspace.
+- **iPad / phone**: use Safari's Share → **Add to Home Screen** — Hearth installs as an app (icon, standalone window, offline shell).
+- **Daily reminders**: click **Enable daily reminders** in the sidebar on each device that should get the morning digest ("3 people to reach out to · Maya, James, Sam"). Quiet days send nothing. On iPhone/iPad, notifications require the Home-Screen-installed app (an iOS rule), so install first, then enable inside it. VAPID keys generate themselves server-side — no key setup.
 - **Extension**: popup → **Connect to Hearth** → paste the site URL + passphrase. From then on, "Save to Hearth" on LinkedIn sends captures straight to the site — a **Review captures** button appears in the sidebar on every device.
 
 ## Security model (read this once)

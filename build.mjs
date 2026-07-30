@@ -46,8 +46,11 @@ fs.writeFileSync(
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="color-scheme" content="light dark" />
+<meta name="theme-color" content="#2E6B57" />
 <title>Hearth — Personal CRM</title>
 <link rel="icon" href="${favicon}" />
+<link rel="manifest" href="manifest.webmanifest" />
+<link rel="apple-touch-icon" href="icon-192.png" />
 <style>${css}</style>
 </head>
 <body>

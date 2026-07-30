@@ -6,6 +6,7 @@ import { execSync } from "node:child_process";
 
 fs.mkdirSync("public", { recursive: true });
 fs.copyFileSync("hearth-standalone.html", "public/index.html");
+fs.writeFileSync("public/.nojekyll", "");
 try {
   execSync("cd extension && zip -qr ../public/hearth-extension.zip .", { stdio: "pipe" });
   console.log("extension zip rebuilt");

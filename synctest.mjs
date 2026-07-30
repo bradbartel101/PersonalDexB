@@ -10,11 +10,37 @@ const PASS = "test-pass";
 const STORE = "./synctest-store.json";
 try { fs.unlinkSync(STORE); } catch (e) { /* fresh */ }
 
+// NODE_TLS_REJECT_UNAUTHORIZED=0 is test-only: it lets the server's web-push
+// deliveries trust the self-signed cert of the local push collector below.
 const server = spawn("node", ["dev-server.mjs", String(PORT)], {
-  env: { ...process.env, HEARTH_STORE_FILE: STORE, HEARTH_PASSPHRASE: PASS },
+  env: { ...process.env, HEARTH_STORE_FILE: STORE, HEARTH_PASSPHRASE: PASS, NODE_TLS_REJECT_UNAUTHORIZED: "0" },
   stdio: "pipe",
 });
 await new Promise((res) => server.stdout.once("data", res));
+
+// A stand-in for a browser push service: web-push requires TLS, so this is a
+// real HTTPS server with a throwaway self-signed cert, recording deliveries.
+const { execSync } = await import("node:child_process");
+const https = await import("node:https");
+const CERT_DIR = "./.synctest-tls";
+fs.mkdirSync(CERT_DIR, { recursive: true });
+execSync(`openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -keyout ${CERT_DIR}/key.pem -out ${CERT_DIR}/cert.pem -days 2 -nodes -subj "/CN=127.0.0.1" 2>/dev/null`);
+const pushInbox = [];
+const CPORT = 8792;
+const collector = https.createServer(
+  { key: fs.readFileSync(CERT_DIR + "/key.pem"), cert: fs.readFileSync(CERT_DIR + "/cert.pem") },
+  (req, res) => {
+    let bytes = 0;
+    req.on("data", (c) => { bytes += c.length; });
+    req.on("end", () => {
+      pushInbox.push({ headers: req.headers, bytes });
+      res.statusCode = 201;
+      res.end("{}");
+    });
+  }
+);
+await new Promise((res) => collector.listen(CPORT, res));
+const PUSH_ENDPOINT = `https://127.0.0.1:${CPORT}/push`;
 
 const browser = await chromium.launch({ executablePath: "/opt/pw-browsers/chromium", args: ["--no-sandbox"] });
 const errors = [];
@@ -121,8 +147,69 @@ await t("unauthenticated API is refused", async () => {
   if (r.status !== 401) throw new Error("status " + r.status);
 });
 
+await t("service worker registers and app shell is cached", async () => {
+  const reg = await B.evaluate(async () => {
+    const r = await navigator.serviceWorker.getRegistration();
+    return r ? { scope: r.scope, active: !!(r.active || r.installing || r.waiting) } : null;
+  });
+  if (!reg || !reg.active) throw new Error("no registration: " + JSON.stringify(reg));
+});
+
+await t("push: vapid key is generated once and stable", async () => {
+  const h = { Authorization: "Bearer " + PASS };
+  const a = await fetch(BASE + "/api/push", { headers: h }).then((r) => r.json());
+  const b = await fetch(BASE + "/api/push", { headers: h }).then((r) => r.json());
+  if (!a.publicKey || a.publicKey !== b.publicKey) throw new Error("unstable key");
+});
+
+await t("push: subscribe → daily digest delivers an encrypted notification", async () => {
+  const crypto = await import("node:crypto");
+  const ecdh = crypto.createECDH("prime256v1");
+  ecdh.generateKeys();
+  const b64u = (buf) => buf.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  const subscription = {
+    endpoint: PUSH_ENDPOINT,
+    keys: { p256dh: b64u(ecdh.getPublicKey()), auth: b64u(crypto.randomBytes(16)) },
+  };
+  const h = { Authorization: "Bearer " + PASS, "Content-Type": "application/json" };
+  const saved = await fetch(BASE + "/api/push", { method: "POST", headers: h, body: JSON.stringify({ subscription }) });
+  if (!saved.ok) throw new Error("subscribe " + saved.status);
+
+  const digest = await fetch(BASE + "/api/notify", { headers: h }).then((r) => r.json());
+  if (digest.sent !== 1) throw new Error("digest: " + JSON.stringify(digest));
+  if (!digest.due || digest.due < 1) throw new Error("no due people counted");
+
+  if (pushInbox.length !== 1) throw new Error("inbox: " + pushInbox.length);
+  const msg = pushInbox[0];
+  if (msg.headers["content-encoding"] !== "aes128gcm") throw new Error("encoding: " + msg.headers["content-encoding"]);
+  if (!msg.headers.authorization || !msg.headers.authorization.startsWith("vapid")) throw new Error("no vapid auth header");
+  if (!(msg.bytes > 100)) throw new Error("payload too small: " + msg.bytes);
+});
+
+await t("push: cron endpoint rejects wrong secret", async () => {
+  const r = await fetch(BASE + "/api/notify", { headers: { Authorization: "Bearer wrong" } });
+  if (r.status !== 401) throw new Error("status " + r.status);
+});
+
+await t("push: unsubscribe removes the endpoint", async () => {
+  const h = { Authorization: "Bearer " + PASS, "Content-Type": "application/json" };
+  const del = await fetch(BASE + "/api/push", {
+    method: "DELETE", headers: h, body: JSON.stringify({ endpoint: PUSH_ENDPOINT }),
+  }).then((r) => r.json());
+  if (del.subscriptions !== 0) throw new Error("remaining: " + del.subscriptions);
+  const digest = await fetch(BASE + "/api/notify", { headers: h }).then((r) => r.json());
+  if (digest.sent !== 0 || digest.reason !== "no subscribers") throw new Error(JSON.stringify(digest));
+});
+
+await t("push UI: enable button renders when synced", async () => {
+  const btn = await B.locator(".push-line").count();
+  if (!btn) throw new Error("push line missing from rail");
+});
+
 console.log(errors.length ? "ERRORS:\n" + errors.join("\n") : "no page errors");
 await browser.close();
 server.kill();
+collector.close();
 try { fs.unlinkSync(STORE); } catch (e) { /* gone */ }
+try { fs.rmSync(CERT_DIR, { recursive: true, force: true }); } catch (e) { /* gone */ }
 process.exit(0);

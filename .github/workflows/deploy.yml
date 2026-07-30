@@ -21,16 +21,10 @@ jobs:
         with:
           node-version: 22
       - run: npm ci
-      - run: node build.mjs
-      - name: Assemble site
-        run: |
-          mkdir -p _site
-          cp hearth-standalone.html _site/index.html
-          (cd extension && zip -r ../_site/hearth-extension.zip .)
-          touch _site/.nojekyll
+      - run: npm run build:site
       - name: Publish to gh-pages branch
         run: |
-          cd _site
+          cd public
           git init -b gh-pages
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

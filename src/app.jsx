@@ -1,27 +1,14 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { createRoot } from "react-dom/client";
+import {
+  DAY, CADENCES, ITYPES, todayMid, pad, iso, parseDate, shiftDays, daysFromToday,
+  fmtShort, fmtLong, ago, inDays, parseBirthday, nextBirthday, lastContact,
+  cadenceDays, cadenceLabel, dueInfo, typicalGap, suggestCadence, findDuplicates,
+} from "./due.js";
 
 /* ============================== constants ============================== */
 
 const KEY = "hearth-crm-v1";
-const DAY = 86400000;
-
-const CADENCES = [
-  { id: "none", label: "No cadence", days: null },
-  { id: "weekly", label: "Weekly", days: 7 },
-  { id: "monthly", label: "Monthly", days: 30 },
-  { id: "quarterly", label: "Quarterly", days: 91 },
-  { id: "yearly", label: "Yearly", days: 365 },
-  { id: "custom", label: "Custom…", days: null },
-];
-
-const ITYPES = [
-  { id: "call", label: "Call", icon: "phone" },
-  { id: "coffee", label: "Coffee", icon: "coffee" },
-  { id: "message", label: "Message", icon: "message" },
-  { id: "email", label: "Email", icon: "mail" },
-  { id: "note", label: "Note", icon: "note" },
-];
 
 const FIELD_PRESETS = ["LinkedIn", "X / Twitter", "Instagram", "GitHub", "Website", "Partner", "Kids", "Address"];
 
@@ -75,97 +62,6 @@ function Mark({ size = 24 }) {
   );
 }
 
-/* ============================== dates ============================== */
-
-function todayMid() { const d = new Date(); d.setHours(0, 0, 0, 0); return d; }
-function pad(n) { return String(n).padStart(2, "0"); }
-function iso(d) { return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); }
-function parseDate(s) {
-  if (!s) return null;
-  const m = String(s).match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
-  if (!m) return null;
-  return new Date(+m[1], +m[2] - 1, +m[3]);
-}
-function shiftDays(d, n) { return new Date(d.getFullYear(), d.getMonth(), d.getDate() + n); }
-function daysFromToday(s) {
-  const d = parseDate(s);
-  return d ? Math.round((d - todayMid()) / DAY) : null;
-}
-function fmtShort(s) {
-  const d = parseDate(s);
-  return d ? d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "";
-}
-function fmtLong(s) {
-  const d = parseDate(s);
-  return d ? d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "";
-}
-function ago(n) {
-  if (n == null) return "never";
-  if (n <= 0) return "today";
-  if (n === 1) return "yesterday";
-  if (n < 14) return n + " days ago";
-  if (n < 60) { const w = Math.round(n / 7); return w + (w === 1 ? " week" : " weeks") + " ago"; }
-  if (n < 365) { const m = Math.round(n / 30); return m + (m === 1 ? " month" : " months") + " ago"; }
-  const y = Math.floor(n / 365);
-  return y + (y === 1 ? " year" : " years") + " ago";
-}
-function inDays(n) {
-  if (n === 0) return "today";
-  if (n === 1) return "tomorrow";
-  return "in " + n + " days";
-}
-
-function parseBirthday(s) {
-  if (!s) return null;
-  const t = String(s).trim();
-  let m = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
-  if (m) return { y: +m[1], mo: +m[2], d: +m[3] };
-  m = t.match(/^(\d{1,2})[\/\-.](\d{1,2})$/);
-  if (m) return { y: null, mo: +m[1], d: +m[2] };
-  return null;
-}
-function nextBirthday(s) {
-  const b = parseBirthday(s);
-  if (!b || b.mo < 1 || b.mo > 12 || b.d < 1 || b.d > 31) return null;
-  const t = todayMid();
-  let d = new Date(t.getFullYear(), b.mo - 1, b.d);
-  if (d < t) d = new Date(t.getFullYear() + 1, b.mo - 1, b.d);
-  return { date: d, turns: b.y ? d.getFullYear() - b.y : null };
-}
-
-/* ============================== due logic ============================== */
-
-function lastContact(c) {
-  let best = null;
-  for (const it of c.interactions || []) if (!best || it.date > best) best = it.date;
-  return best;
-}
-function cadenceDays(c) {
-  const cad = c.cadence || { id: "none" };
-  if (cad.id === "none") return null;
-  if (cad.id === "custom") return cad.days > 0 ? cad.days : null;
-  const def = CADENCES.find((x) => x.id === cad.id);
-  return def ? def.days : null;
-}
-function cadenceLabel(c) {
-  const cad = c.cadence || { id: "none" };
-  if (cad.id === "custom" && cad.days > 0) return "every " + cad.days + "d";
-  const def = CADENCES.find((x) => x.id === cad.id);
-  return def && def.days ? def.label.toLowerCase() : "";
-}
-function dueInfo(c) {
-  const last = lastContact(c);
-  const days = cadenceDays(c);
-  if (!days) return { status: "none", last };
-  const anchorStr = last || (c.createdAt || "").slice(0, 10) || iso(todayMid());
-  const anchor = parseDate(anchorStr) || todayMid();
-  let due = shiftDays(anchor, days);
-  const sn = parseDate(c.snoozedUntil);
-  if (sn && sn > due) due = sn;
-  const overdueDays = Math.round((todayMid() - due) / DAY);
-  const status = overdueDays >= 0 ? "overdue" : overdueDays >= -7 ? "soon" : "ok";
-  return { status, last, due: iso(due), overdueDays };
-}
 function duePill(info) {
   if (info.status === "none") return null;
   if (info.status === "overdue")
@@ -320,7 +216,11 @@ function seedData() {
       C({
         name: "Chris Palmer", context: "Dog park regular, has the corgi",
         tags: ["neighbor"], groups: [],
-        interactions: [],
+        interactions: [
+          { id: uid(), type: "message", date: d(8), text: "Sent him the corgi meetup flyer." },
+          { id: uid(), type: "coffee", date: d(20), text: "Ran into him at Peet's — talked fantasy football." },
+          { id: uid(), type: "message", date: d(33), text: "Dog park plans for Saturday." },
+        ],
       }),
     ],
   };
@@ -331,41 +231,9 @@ function blankContact(name) {
     id: uid(), name: name.trim(), context: "", email: "", phone: "", company: "",
     role: "", location: "", birthday: "", photo: null, notes: "", tags: [], groups: [],
     custom: [], reminders: [], dates: [], interactions: [], cadence: { id: "none", days: null },
-    snoozedUntil: null, starred: false, archived: false, createdAt: iso(todayMid()), sample: false,
+    snoozedUntil: null, starred: false, archived: false, noSuggest: false,
+    createdAt: iso(todayMid()), sample: false,
   };
-}
-
-/* median days between interactions, for the relationship insight line */
-function typicalGap(c) {
-  const ds = (c.interactions || []).map((i) => i.date).sort();
-  if (ds.length < 2) return null;
-  const gaps = [];
-  for (let i = 1; i < ds.length; i++) {
-    const a = parseDate(ds[i - 1]), b = parseDate(ds[i]);
-    if (a && b) gaps.push(Math.round((b - a) / DAY));
-  }
-  if (!gaps.length) return null;
-  gaps.sort((a, b) => a - b);
-  return gaps[Math.floor(gaps.length / 2)];
-}
-
-function findDuplicates(contacts) {
-  const byKey = {};
-  for (const c of contacts) {
-    const keys = [];
-    const n = (c.name || "").trim().toLowerCase().replace(/\s+/g, " ");
-    if (n) keys.push("n:" + n);
-    const e = (c.email || "").trim().toLowerCase();
-    if (e) keys.push("e:" + e);
-    for (const k of keys) (byKey[k] = byKey[k] || new Set()).add(c.id);
-  }
-  const groups = [], seen = new Set();
-  for (const ids of Object.values(byKey)) {
-    if (ids.size < 2) continue;
-    const key = [...ids].sort().join("|");
-    if (!seen.has(key)) { seen.add(key); groups.push([...ids]); }
-  }
-  return groups;
 }
 
 /* ============================== small components ============================== */
@@ -478,9 +346,29 @@ function greeting() {
   return "Good evening";
 }
 
-function TodayView({ contacts, openProfile, logInteraction, snooze, completeReminder }) {
+function TodayView({ contacts, openProfile, logInteraction, snooze, completeReminder, acceptSuggest, dismissSuggest }) {
   const [logging, setLogging] = useState(null);
   const today = todayMid();
+
+  const suggestions = useMemo(() =>
+    contacts
+      .map((c) => ({ c, s: suggestCadence(c) }))
+      .filter((x) => x.s)
+      .slice(0, 3),
+    [contacts]);
+
+  const momentum = useMemo(() => {
+    let thisWeek = 0, lastWeek = 0;
+    for (const c of contacts) {
+      for (const it of c.interactions || []) {
+        const n = daysFromToday(it.date);
+        if (n == null) continue;
+        if (n > -7 && n <= 0) thisWeek++;
+        else if (n > -14 && n <= -7) lastWeek++;
+      }
+    }
+    return { thisWeek, lastWeek };
+  }, [contacts]);
 
   const due = useMemo(() => {
     return contacts
@@ -530,6 +418,15 @@ function TodayView({ contacts, openProfile, logInteraction, snooze, completeRemi
             : due.length === 1
               ? "One person to reach out to."
               : due.length + " people to reach out to."}
+          {" "}
+          <span className="momentum">
+            {momentum.thisWeek} logged this week
+            {momentum.lastWeek > 0 || momentum.thisWeek > 0
+              ? momentum.thisWeek >= momentum.lastWeek
+                ? " · up from " + momentum.lastWeek + " last week"
+                : " · down from " + momentum.lastWeek + " last week"
+              : ""}
+          </span>
         </p>
       </header>
 
@@ -576,6 +473,35 @@ function TodayView({ contacts, openProfile, logInteraction, snooze, completeRemi
           ))}
         </div>
       </section>
+
+      {suggestions.length > 0 && (
+        <section className="section">
+          <div className="section-head">
+            <h2 className="section-title">Noticed</h2>
+          </div>
+          <div className="card row-list">
+            {suggestions.map(({ c, s }) => (
+              <div key={c.id} className="person-row">
+                <div className="person-row-main">
+                  <Avatar c={c} size={38} />
+                  <div className="person-row-info">
+                    <button className="person-name" onClick={() => openProfile(c.id)}>{c.name}</button>
+                    <div className="person-meta">
+                      You log something about every {s.gap} days but have no cadence set — {s.label.toLowerCase()}?
+                    </div>
+                  </div>
+                  <div className="person-side">
+                    <button className="btn primary sm" onClick={() => acceptSuggest(c.id, s.id)}>
+                      Set {s.label.toLowerCase()}
+                    </button>
+                    <button className="btn ghost sm" onClick={() => dismissSuggest(c.id)}>No thanks</button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       <section className="section">
         <div className="section-head">
@@ -988,6 +914,16 @@ function ProfileView({ contact: c, groups, back, update, remove, logInteraction,
             </label>
           )}
         </div>
+        {(() => {
+          const s = suggestCadence(c);
+          return s ? (
+            <div className="cadence-status" style={{ marginTop: 0, marginBottom: 10 }}>
+              <button className="type-chip" onClick={() => set({ cadence: { id: s.id, days: CADENCES.find((x) => x.id === s.id).days } })}>
+                Suggested: {s.label} — you average every {s.gap}d
+              </button>
+            </div>
+          ) : null;
+        })()}
         <div className="cadence-status">
           <span>Last touch <b>{ago(info.last ? -daysFromToday(info.last) : null)}</b></span>
           {pill && <span className={"pill " + pill.cls}>{pill.text}</span>}
@@ -1415,6 +1351,7 @@ function normalizeData(raw) {
     cadence: c.cadence && c.cadence.id ? c.cadence : { id: "none", days: null },
     starred: !!c.starred,
     archived: !!c.archived,
+    noSuggest: !!c.noSuggest,
   }));
   for (const c of data.contacts)
     for (const g of c.groups) if (!data.groups.includes(g)) data.groups.push(g);
@@ -1436,6 +1373,12 @@ function App() {
   const csvRef = useRef(null);
   const capRef = useRef(null);
   const toastTimer = useRef(null);
+
+  const toast = useCallback((msg) => {
+    setToastState({ msg });
+    clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToastState(null), 2600);
+  }, []);
 
   /* ---- cloud sync state ---- */
   const [syncState, setSyncState] = useState(HTTP ? "probing" : "off");
@@ -1501,6 +1444,54 @@ function App() {
     probeSync(p);
   }, [probeSync]);
 
+  /* ---- daily push reminders (PWA) ---- */
+  const PUSH_SUPPORTED = HTTP && "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+  const [pushState, setPushState] = useState("idle");
+
+  useEffect(() => {
+    if (!HTTP || !("serviceWorker" in navigator)) return;
+    navigator.serviceWorker.register("sw.js").then(async (reg) => {
+      try {
+        const sub = await reg.pushManager.getSubscription();
+        if (sub) setPushState("on");
+        else if (Notification.permission === "denied") setPushState("denied");
+      } catch (e) { /* stays idle */ }
+    }).catch(() => { /* no sw.js on this host (e.g. artifact) */ });
+  }, []);
+
+  const enablePush = useCallback(async () => {
+    setPushState("busy");
+    try {
+      const perm = await Notification.requestPermission();
+      if (perm !== "granted") { setPushState(perm === "denied" ? "denied" : "idle"); return; }
+      const { status, json } = await apiCall("api/push", {}, passRef.current);
+      if (status !== 200 || !json || !json.publicKey) throw new Error("no vapid key");
+      const raw = atob(json.publicKey.replace(/-/g, "+").replace(/_/g, "/"));
+      const key = new Uint8Array([...raw].map((ch) => ch.charCodeAt(0)));
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+      const saved = await apiCall("api/push", { method: "POST", body: JSON.stringify({ subscription: sub.toJSON() }) }, passRef.current);
+      if (saved.status !== 200) throw new Error("save failed");
+      setPushState("on");
+      toast("Daily reminders on — one morning nudge when someone's due");
+    } catch (e) {
+      setPushState("error");
+    }
+  }, [toast]);
+
+  const disablePush = useCallback(async () => {
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      if (sub) {
+        await apiCall("api/push", { method: "DELETE", body: JSON.stringify({ endpoint: sub.endpoint }) }, passRef.current);
+        await sub.unsubscribe();
+      }
+    } catch (e) { /* best effort */ }
+    setPushState("idle");
+    toast("Daily reminders off");
+  }, [toast]);
+
   /* poll for remote changes + extension captures */
   useEffect(() => {
     if (syncState !== "synced") return;
@@ -1520,11 +1511,6 @@ function App() {
     return () => clearInterval(id);
   }, [syncState, pullCaptures]);
 
-  const toast = useCallback((msg) => {
-    setToastState({ msg });
-    clearTimeout(toastTimer.current);
-    toastTimer.current = setTimeout(() => setToastState(null), 2600);
-  }, []);
 
   /* load */
   useEffect(() => {
@@ -1626,6 +1612,17 @@ function App() {
     setData((d) => (d.groups.includes(g) ? d : { ...d, groups: [...d.groups, g] }));
   }, []);
 
+  const acceptSuggest = useCallback((id, cadId) => {
+    const def = CADENCES.find((x) => x.id === cadId);
+    updateContact(id, { cadence: { id: cadId, days: def ? def.days : null } });
+    const c = contacts.find((x) => x.id === id);
+    toast((c ? c.name : "Contact") + " set to " + (def ? def.label.toLowerCase() : cadId));
+  }, [contacts, updateContact, toast]);
+
+  const dismissSuggest = useCallback((id) => {
+    updateContact(id, { noSuggest: true });
+  }, [updateContact]);
+
   const toggleStar = useCallback((id) => {
     setData((d) => ({ ...d, contacts: d.contacts.map((c) => (c.id === id ? { ...c, starred: !c.starred } : c)) }));
   }, []);
@@ -1661,6 +1658,7 @@ function App() {
 
   const [dupOpen, setDupOpen] = useState(false);
   const dupGroups = useMemo(() => (dupOpen ? findDuplicates(contacts) : []), [dupOpen, contacts]);
+  const dupCount = useMemo(() => findDuplicates(contacts).length, [contacts]);
 
   const mergeContacts = useCallback((ids) => {
     setData((d) => {
@@ -1891,6 +1889,22 @@ function App() {
             {syncState === "unconfigured" && (
               <div className="sync-line">Sync server needs a HEARTH_PASSPHRASE env var</div>
             )}
+            {syncState === "synced" && PUSH_SUPPORTED && (
+              <div className="sync-line push-line">
+                <Icon n="bell" size={13} />
+                {pushState === "on" ? (
+                  <>Daily reminders on<button className="push-off" onClick={disablePush}>turn off</button></>
+                ) : pushState === "denied" ? (
+                  <span>Notifications blocked in browser settings</span>
+                ) : pushState === "error" ? (
+                  <>Couldn't enable<button className="push-off" onClick={enablePush}>retry</button></>
+                ) : (
+                  <button className="push-on" onClick={enablePush} disabled={pushState === "busy"}>
+                    {pushState === "busy" ? "Enabling…" : "Enable daily reminders"}
+                  </button>
+                )}
+              </div>
+            )}
             {(syncState === "needpass" || syncState === "badpass") && (
               <form onSubmit={(e) => { e.preventDefault(); connectSync(passDraft); }}>
                 <div className={"sync-line" + (syncState === "badpass" ? " err" : "")}>
@@ -1921,7 +1935,10 @@ function App() {
           <button className="rail-tool" onClick={doExport}><Icon n="download" size={15} /><span>Export backup</span></button>
           <button className="rail-tool" onClick={() => jsonRef.current && jsonRef.current.click()}><Icon n="upload" size={15} /><span>Restore JSON</span></button>
           <button className="rail-tool" onClick={() => { setReview(null); setLiOpen(true); }}><Icon n="users" size={15} /><span>LinkedIn / CSV import</span></button>
-          <button className="rail-tool" onClick={() => setDupOpen(true)}><Icon n="merge" size={15} /><span>Merge duplicates</span></button>
+          <button className="rail-tool" onClick={() => setDupOpen(true)}>
+            <Icon n="merge" size={15} /><span>Merge duplicates</span>
+            {dupCount > 0 && <span className="nav-badge" style={{ marginLeft: "auto" }}>{dupCount}</span>}
+          </button>
           {sampleCount > 0 && (
             <ConfirmButton className="rail-tool" label={<><Icon n="broom" size={15} /><span>Clear sample data</span></>}
               confirmLabel={<><Icon n="trash" size={15} /><span>Remove {sampleCount} samples?</span></>}
@@ -1946,7 +1963,8 @@ function App() {
         {route.name === "today" && (
           <TodayView contacts={contacts.filter((c) => !c.archived)}
             openProfile={(id) => setRoute({ name: "profile", id, from: "today" })}
-            logInteraction={logInteraction} snooze={snooze} completeReminder={completeReminder} />
+            logInteraction={logInteraction} snooze={snooze} completeReminder={completeReminder}
+            acceptSuggest={acceptSuggest} dismissSuggest={dismissSuggest} />
         )}
         {route.name === "people" && (
           <PeopleView contacts={contacts} groups={data.groups} prefs={data.prefs}

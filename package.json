@@ -7,13 +7,15 @@
   "scripts": {
     "build": "node build.mjs",
     "test:standalone": "node smoke.mjs hearth-standalone.html",
-    "test": "node smoke.mjs && node pro.mjs && node litest.mjs && node exttest.mjs && node synctest.mjs",
+    "test": "node smoke.mjs && node pro.mjs && node litest.mjs && node exttest.mjs && node autotest.mjs && node synctest.mjs",
     "build:site": "node build.mjs && node scripts/site.mjs",
-    "test:sync": "node synctest.mjs"
+    "test:sync": "node synctest.mjs",
+    "test:auto": "node autotest.mjs"
   },
   "dependencies": {
     "react": "^19.2.4",
-    "react-dom": "^19.2.4"
+    "react-dom": "^19.2.4",
+    "web-push": "^3.6.7"
   },
   "devDependencies": {
     "esbuild": "^0.27.3",

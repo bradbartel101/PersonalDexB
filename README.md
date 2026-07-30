@@ -32,6 +32,14 @@ Open app → **Today** shows who's overdue (by cadence + last interaction, most 
 - **Quick actions**: one-click `mailto:` / `tel:` from profile fields
 - **Relationship insights**: interactions logged and typical gap between them, per contact
 
+### Automation
+
+- **Daily push digest**: a Vercel cron hits `api/notify.js` each morning; it computes who's overdue plus today's birthdays/reminders/dates (shared logic in `src/due.js`) and sends a Web Push notification to every subscribed device. VAPID keys auto-generate and persist server-side; dead subscriptions self-prune; quiet days send nothing.
+- **PWA**: `public/manifest.webmanifest` + `public/sw.js` make the hosted app installable (Add to Home Screen on iPad/iPhone) with an offline app shell.
+- **Cadence suggestions**: contacts with 3+ interactions, a median gap ≤ 60 days, and no cadence get a "Noticed" card on Today (and a chip on their profile) proposing the log-nearest standard cadence — one tap to accept, dismissals persist.
+- **Momentum**: the Today header tracks interactions logged this week vs last.
+- **Duplicate watch**: the Merge duplicates tool shows a live badge whenever two entries share a name or email.
+
 ## Cloud sync & sharing (Vercel)
 
 Deploying to Vercel (see **DEPLOY.md**) turns Hearth into a shared, synced workspace: serverless routes in `api/` store the whole CRM as a versioned document in Upstash Redis, gated by a single `HEARTH_PASSPHRASE`. Every device (laptop, iPad, a friend's phone) that enters the passphrase shares the same live data — the client pushes debounced saves with optimistic versioning and polls every 25s. The extension can POST captures directly to `api/captures` (popup → "Connect to Hearth"), which surface as a "Review captures" button on all devices. Without a backend (GitHub Pages, local file), the app runs local-only exactly as before.
