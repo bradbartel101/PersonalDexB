@@ -3,3 +3,4 @@ shot-*.png
 devstore.json
 synctest-store.json
 .synctest-tls/
+linkedin-fixture*.csv

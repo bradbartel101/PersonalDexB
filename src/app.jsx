@@ -4,6 +4,8 @@ import {
   DAY, CADENCES, ITYPES, todayMid, pad, iso, parseDate, shiftDays, daysFromToday,
   fmtShort, fmtLong, ago, inDays, parseBirthday, nextBirthday, lastContact,
   cadenceDays, cadenceLabel, dueInfo, typicalGap, suggestCadence, findDuplicates,
+  GROUP_COLORS, DEFAULT_GROUPS, DEFAULT_RULES, suggestFromRules, ruleMatches,
+  groupName, normalizeGroups, colorOf, customDays, UNIT_DAYS,
 } from "./due.js";
 
 /* ============================== constants ============================== */
@@ -41,6 +43,8 @@ const PATHS = {
   history: <path d="M3.5 12a8.5 8.5 0 1 0 2.5-6L3.5 8.5m0-4.5v4.5H8M12 8v4.5l3 2" />,
   merge: <path d="M7 4h4v4H7zM13 16h4v4h-4zM9 8v4a4 4 0 0 0 4 4M9 12h.01" />,
   calendar: <><rect x="3.5" y="5" width="17" height="15.5" rx="2.5" /><path d="M3.5 9.5h17M8 3v4M16 3v4" /></>,
+  tag: <><path d="M3.5 11V4.5a1 1 0 0 1 1-1H11l9 9-7.5 7.5-9-9z" /><circle cx="7.5" cy="7.5" r="1.3" /></>,
+  wand: <path d="M4 20 16.5 7.5M14.5 5.5 18.5 9.5M17 3.5v3M20.5 5H21M6.5 4v2.5M5.5 5.2H8M19 15v2M18 16h2" />,
 };
 
 function Icon({ n, size = 16 }) {
@@ -121,19 +125,22 @@ function seedData() {
     return (b.getFullYear() - age) + "-" + pad(b.getMonth() + 1) + "-" + pad(b.getDate());
   };
   const C = (o) => ({
-    id: uid(), name: "", context: "", email: "", phone: "", company: "", role: "",
+    id: uid(), name: "", context: "", emails: [], phones: [], company: "", role: "",
     location: "", birthday: "", photo: null, notes: "", tags: [], groups: [],
     custom: [], reminders: [], dates: [], interactions: [], cadence: { id: "none", days: null },
-    snoozedUntil: null, starred: false, archived: false, createdAt: d(400), sample: true, ...o,
+    snoozedUntil: null, starred: false, archived: false, strength: 0,
+    lastContactedAt: "", linkedin: "", connectedOn: "",
+    createdAt: d(400), sample: true, ...o,
   });
   return {
-    v: 1,
-    groups: ["Family", "Close Friends", "Work", "Investors"],
+    v: 2,
+    groups: DEFAULT_GROUPS.map((g) => ({ ...g })),
+    rules: DEFAULT_RULES.map((r) => ({ ...r })),
     prefs: { view: "list" },
     contacts: [
       C({
-        name: "Maya Chen", context: "College roommate at Berkeley",
-        email: "maya@hey.com", company: "Figma", role: "Product Designer", location: "San Francisco",
+        name: "Maya Chen", strength: 5, context: "College roommate at Berkeley",
+        emails: ["maya@hey.com"], company: "Figma", role: "Product Designer", location: "San Francisco",
         birthday: bday(12, 31), tags: ["berkeley", "design", "hiking"], groups: ["Close Friends"],
         cadence: { id: "monthly" }, starred: true,
         custom: [{ id: uid(), label: "Instagram", value: "@mayadraws" }],
@@ -144,8 +151,8 @@ function seedData() {
         ],
       }),
       C({
-        name: "Grandma June", context: "Mom's side — calls every Sunday if I don't first",
-        phone: "(555) 201-4477", location: "Tucson, AZ", birthday: bday(25, 84),
+        name: "Grandma June", strength: 5, context: "Mom's side — calls every Sunday if I don't first",
+        phones: ["(555) 201-4477"], location: "Tucson, AZ", birthday: bday(25, 84),
         tags: ["family"], groups: ["Family"], cadence: { id: "weekly" }, starred: true,
         notes: "New hip doing great. Ask about the garden — the tomatoes are her pride this year.",
         interactions: [
@@ -154,8 +161,8 @@ function seedData() {
         ],
       }),
       C({
-        name: "Sam Torres", context: "Climbing gym → real friendship",
-        phone: "(555) 887-2210", location: "Oakland", tags: ["climbing", "music"],
+        name: "Sam Torres", strength: 4, context: "Climbing gym → real friendship",
+        phones: ["(555) 887-2210"], location: "Oakland", tags: ["climbing", "music"],
         groups: ["Close Friends"], cadence: { id: "weekly" },
         notes: "Just got a rescue dog named Biscuit. Wants to plan a Bishop trip this fall.",
         interactions: [
@@ -164,11 +171,11 @@ function seedData() {
         ],
       }),
       C({
-        name: "James Okafor", context: "Intro'd by Priya at Founders Brunch '24",
-        email: "james@meridianvc.com", company: "Meridian Ventures", role: "Partner",
+        name: "James Okafor", strength: 3, context: "Intro'd by Priya at Founders Brunch '24",
+        emails: ["james@meridianvc.com"], company: "Meridian Ventures", role: "Partner",
         location: "New York", tags: ["fintech", "angel"], groups: ["Investors"],
         cadence: { id: "quarterly" },
-        custom: [{ id: uid(), label: "LinkedIn", value: "in/jokafor" }],
+        linkedin: "https://www.linkedin.com/in/jokafor", connectedOn: "14 Mar 2024",
         reminders: [{ id: uid(), date: f(15), text: "Send the Q3 update deck" }],
         notes: "Writes $50–250k checks. Genuinely helpful with hiring intros. Two kids, big Arsenal fan.",
         interactions: [
@@ -177,8 +184,8 @@ function seedData() {
         ],
       }),
       C({
-        name: "Priya Sharma", context: "Former teammate at Stripe, my first mentor",
-        email: "priya.sh@gmail.com", company: "Anthropic", role: "Eng Manager", location: "San Francisco",
+        name: "Priya Sharma", strength: 4, context: "Former teammate at Stripe, my first mentor",
+        emails: ["priya.sh@gmail.com"], company: "Anthropic", role: "Eng Manager", location: "San Francisco",
         tags: ["stripe", "mentor"], groups: ["Work"], cadence: { id: "quarterly" },
         dates: [{ id: uid(), label: "Stripe reunion dinner", date: bday(20, 5) }],
         notes: "Best career advice I've ever gotten. Owes me a book rec; I owe her dinner.",
@@ -187,8 +194,8 @@ function seedData() {
         ],
       }),
       C({
-        name: "Alex Kim", context: "Met at the AI meetup demo night",
-        email: "alex@lumenlabs.io", company: "Lumen Labs", role: "Founder", location: "Berkeley",
+        name: "Alex Kim", strength: 2, context: "Met at the AI meetup demo night",
+        emails: ["alex@lumenlabs.io"], company: "Lumen Labs", role: "Founder", location: "Berkeley",
         tags: ["ai", "founder"], groups: ["Work"], cadence: { id: "monthly" },
         reminders: [{ id: uid(), date: f(6), text: "Ask how the launch went" }],
         interactions: [
@@ -196,8 +203,8 @@ function seedData() {
         ],
       }),
       C({
-        name: "Dana Whitfield", context: "Angel from the first round, met via YC forum",
-        email: "dana@whitfield.capital", company: "Whitfield Capital", location: "Austin",
+        name: "Dana Whitfield", strength: 2, context: "Angel from the first round, met via YC forum",
+        emails: ["dana@whitfield.capital"], company: "Whitfield Capital", location: "Austin",
         tags: ["angel"], groups: ["Investors"], cadence: { id: "yearly" },
         notes: "Prefers email. Hands-off but opens every update.",
         interactions: [
@@ -205,8 +212,8 @@ function seedData() {
         ],
       }),
       C({
-        name: "Noor Haddad", context: "Neighbors in the old building on Grand Ave",
-        phone: "(555) 341-9902", location: "Oakland", birthday: bday(3, 29),
+        name: "Noor Haddad", strength: 3, context: "Neighbors in the old building on Grand Ave",
+        phones: ["(555) 341-9902"], location: "Oakland", birthday: bday(3, 29),
         tags: ["neighbor", "food"], groups: ["Close Friends"], cadence: { id: "monthly" },
         notes: "Started a supper club — wants help with the website. Incredible cook.",
         interactions: [
@@ -214,7 +221,7 @@ function seedData() {
         ],
       }),
       C({
-        name: "Chris Palmer", context: "Dog park regular, has the corgi",
+        name: "Chris Palmer", strength: 1, context: "Dog park regular, has the corgi",
         tags: ["neighbor"], groups: [],
         interactions: [
           { id: uid(), type: "message", date: d(8), text: "Sent him the corgi meetup flyer." },
@@ -228,13 +235,16 @@ function seedData() {
 
 function blankContact(name) {
   return {
-    id: uid(), name: name.trim(), context: "", email: "", phone: "", company: "",
+    id: uid(), name: name.trim(), context: "", emails: [], phones: [], company: "",
     role: "", location: "", birthday: "", photo: null, notes: "", tags: [], groups: [],
     custom: [], reminders: [], dates: [], interactions: [], cadence: { id: "none", days: null },
     snoozedUntil: null, starred: false, archived: false, noSuggest: false,
+    strength: 0, lastContactedAt: "", linkedin: "", connectedOn: "",
     createdAt: iso(todayMid()), sample: false,
   };
 }
+
+const STRENGTH_LABELS = ["Not set", "Acquaintance", "Loose tie", "Solid", "Close", "Inner circle"];
 
 /* ============================== small components ============================== */
 
@@ -336,6 +346,54 @@ function ChipInput({ onAdd, placeholder }) {
   );
 }
 
+function CategoryRow({ group, count, onRename, onRecolor, onDelete }) {
+  const [name, setName] = useState(group.name);
+  useEffect(() => { setName(group.name); }, [group.name]);
+  return (
+    <div className="cat-row">
+      <input className={"cat-name chip gc-" + group.color} value={name}
+        onChange={(e) => setName(e.target.value)}
+        onBlur={() => (name.trim() ? onRename(name) : setName(group.name))}
+        onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); }} />
+      <span className="cat-count">{count} {count === 1 ? "person" : "people"}</span>
+      <span className="cat-swatches">
+        {GROUP_COLORS.map((label, i) => (
+          <button key={i} className={"swatch gc-" + i + (group.color === i ? " on" : "")}
+            title={label} aria-label={label} onClick={() => onRecolor(i)} />
+        ))}
+      </span>
+      <ConfirmButton className="btn ghost sm danger" label="Remove" confirmLabel="Sure?" onConfirm={onDelete} />
+    </div>
+  );
+}
+
+function RuleRow({ rule, groups, contacts, onSave, onDelete }) {
+  const matches = useMemo(
+    () => contacts.filter((c) => !c.archived && ruleMatches(rule, c)).length,
+    [rule, contacts]);
+  const patch = (p) => onSave({ ...rule, ...p });
+  return (
+    <div className="rule-row">
+      <select className="select" value={rule.field} onChange={(e) => patch({ field: e.target.value })}>
+        <option value="any">Company or title</option>
+        <option value="company">Company</option>
+        <option value="title">Title</option>
+      </select>
+      <span className="rule-word">contains</span>
+      <input className="rule-input" value={rule.keywords} placeholder="ventures, capital"
+        onChange={(e) => patch({ keywords: e.target.value })} />
+      <span className="rule-word">→</span>
+      <input className="rule-input short" value={rule.group} placeholder="Category" list="rule-groups"
+        onChange={(e) => patch({ group: e.target.value })} />
+      <datalist id="rule-groups">
+        {groups.map((g) => <option key={g.name} value={g.name} />)}
+      </datalist>
+      <span className="rule-count" title="People currently matching">{matches}</span>
+      <button className="icon-btn" title="Delete rule" onClick={onDelete}><Icon n="trash" size={14} /></button>
+    </div>
+  );
+}
+
 /* ============================== today view ============================== */
 
 function greeting() {
@@ -346,7 +404,7 @@ function greeting() {
   return "Good evening";
 }
 
-function TodayView({ contacts, openProfile, logInteraction, snooze, completeReminder, acceptSuggest, dismissSuggest }) {
+function TodayView({ contacts, groups, openProfile, logInteraction, snooze, completeReminder, acceptSuggest, dismissSuggest, openPeople }) {
   const [logging, setLogging] = useState(null);
   const today = todayMid();
 
@@ -355,6 +413,18 @@ function TodayView({ contacts, openProfile, logInteraction, snooze, completeRemi
       .map((c) => ({ c, s: suggestCadence(c) }))
       .filter((x) => x.s)
       .slice(0, 3),
+    [contacts]);
+
+  const recent = useMemo(() => {
+    const out = [];
+    for (const c of contacts)
+      for (const it of c.interactions || []) out.push({ c, it });
+    out.sort((a, b) => b.it.date.localeCompare(a.it.date));
+    return out.slice(0, 5);
+  }, [contacts]);
+
+  const uncategorized = useMemo(
+    () => contacts.filter((c) => (c.groups || []).length === 0),
     [contacts]);
 
   const momentum = useMemo(() => {
@@ -503,6 +573,58 @@ function TodayView({ contacts, openProfile, logInteraction, snooze, completeRemi
         </section>
       )}
 
+      {uncategorized.length > 0 && (
+        <section className="section">
+          <div className="section-head">
+            <h2 className="section-title">Needs a category</h2>
+            <span className="section-count">{uncategorized.length}</span>
+          </div>
+          <div className="card uncat-card">
+            <p className="uncat-note">
+              Imported or added without a category. Open one to file it, or use bulk select in People.
+            </p>
+            <div className="uncat-list">
+              {uncategorized.slice(0, 8).map((c) => (
+                <button key={c.id} className="uncat-chip" onClick={() => openProfile(c.id)}>
+                  <Avatar c={c} size={22} />{c.name}
+                </button>
+              ))}
+            </div>
+            {uncategorized.length > 8 && (
+              <button className="btn sm" onClick={() => openPeople("uncategorized")}>
+                See all {uncategorized.length}
+              </button>
+            )}
+          </div>
+        </section>
+      )}
+
+      {recent.length > 0 && (
+        <section className="section">
+          <div className="section-head">
+            <h2 className="section-title">Recent interactions</h2>
+          </div>
+          <div className="card row-list">
+            {recent.map(({ c, it }) => {
+              const ty = ITYPES.find((x) => x.id === it.type) || ITYPES[ITYPES.length - 1];
+              return (
+                <div className="up-row" key={it.id}>
+                  <div className="up-icon"><Icon n={ty.icon} size={16} /></div>
+                  <div className="up-body">
+                    <div className="up-title">
+                      <button onClick={() => openProfile(c.id)}>{c.name}</button>
+                      <span className="hist-type">{ty.label}</span>
+                    </div>
+                    {it.text && <div className="up-sub">{it.text}</div>}
+                  </div>
+                  <span className="up-when">{ago(-daysFromToday(it.date))}</span>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
       <section className="section">
         <div className="section-head">
           <h2 className="section-title">Next 30 days</h2>
@@ -546,13 +668,14 @@ function TodayView({ contacts, openProfile, logInteraction, snooze, completeRemi
 
 /* ============================== people view ============================== */
 
-function PeopleView({ contacts, groups, prefs, setPrefs, openProfile, addContact, focusSignal, toggleStar, bulkApply }) {
+function PeopleView({ contacts, groups, prefs, setPrefs, openProfile, addContact, focusSignal, toggleStar, bulkApply, initialShow }) {
   const [q, setQ] = useState("");
   const [group, setGroup] = useState("");
   const [tag, setTag] = useState("");
   const [status, setStatus] = useState("");
   const [show, setShow] = useState("active");
   const [sort, setSort] = useState("name");
+  const [strength, setStrength] = useState("");
   const [newName, setNewName] = useState("");
   const [bulk, setBulk] = useState(false);
   const [sel, setSel] = useState(() => new Set());
@@ -568,6 +691,10 @@ function PeopleView({ contacts, groups, prefs, setPrefs, openProfile, addContact
     return next;
   });
   const exitBulk = () => { setBulk(false); setSel(new Set()); };
+
+  useEffect(() => {
+    if (initialShow) setShow(initialShow);
+  }, [initialShow]);
 
   useEffect(() => {
     if (!focusSignal) return;
@@ -589,11 +716,14 @@ function PeopleView({ contacts, groups, prefs, setPrefs, openProfile, addContact
         if (show === "active" && c.archived) return false;
         if (show === "starred" && (!c.starred || c.archived)) return false;
         if (show === "archived" && !c.archived) return false;
+        if (show === "uncategorized" && ((c.groups || []).length > 0 || c.archived)) return false;
         if (group && !(c.groups || []).includes(group)) return false;
         if (tag && !(c.tags || []).includes(tag)) return false;
         if (status && info.status !== status) return false;
+        if (strength && (c.strength || 0) < +strength) return false;
         if (needle) {
-          const hay = [c.name, c.company, c.role, c.context, c.email, c.location, c.notes,
+          const hay = [c.name, c.company, c.role, c.context, c.location, c.notes, c.linkedin,
+            (c.emails || []).join(" "), (c.phones || []).join(" "),
             (c.tags || []).join(" "), (c.groups || []).join(" "),
             (c.custom || []).map((f) => f.label + " " + f.value).join(" ")].join(" ").toLowerCase();
           if (!hay.includes(needle)) return false;
@@ -603,9 +733,11 @@ function PeopleView({ contacts, groups, prefs, setPrefs, openProfile, addContact
     if (sort === "recent") list.sort((a, b) => (b.info.last || "").localeCompare(a.info.last || ""));
     else if (sort === "overdue") list.sort((a, b) =>
       (b.info.overdueDays ?? -99999) - (a.info.overdueDays ?? -99999));
+    else if (sort === "strength") list.sort((a, b) =>
+      (b.c.strength || 0) - (a.c.strength || 0) || a.c.name.localeCompare(b.c.name));
     else list.sort((a, b) => a.c.name.localeCompare(b.c.name));
     return list;
-  }, [contacts, q, group, tag, status, show, sort]);
+  }, [contacts, q, group, tag, status, show, sort, strength]);
 
   const submitNew = (e) => {
     e.preventDefault();
@@ -646,34 +778,45 @@ function PeopleView({ contacts, groups, prefs, setPrefs, openProfile, addContact
             onKeyDown={(e) => { if (e.key === "Escape") { setQ(""); e.target.blur(); } }} />
           {q && <button className="icon-btn" style={{ width: 22, height: 22 }} onClick={() => setQ("")}><Icon n="x" size={13} /></button>}
         </div>
-        <select className={"select" + (group ? " active" : "")} value={group} onChange={(e) => setGroup(e.target.value)}>
+        <select className={"select" + (group ? " active" : "")} value={group} aria-label="Category" onChange={(e) => setGroup(e.target.value)}>
           <option value="">Group</option>
-          {groups.map((g) => <option key={g} value={g}>{g}</option>)}
+          {groups.map((g) => <option key={g.name} value={g.name}>{g.name}</option>)}
         </select>
-        <select className={"select" + (tag ? " active" : "")} value={tag} onChange={(e) => setTag(e.target.value)}>
+        <select className={"select" + (tag ? " active" : "")} value={tag} aria-label="Tag" onChange={(e) => setTag(e.target.value)}>
           <option value="">Tag</option>
           {allTags.map((t) => <option key={t} value={t}>{t}</option>)}
         </select>
-        <select className={"select" + (status ? " active" : "")} value={status} onChange={(e) => setStatus(e.target.value)}>
+        <select className={"select" + (status ? " active" : "")} value={status} aria-label="Status" onChange={(e) => setStatus(e.target.value)}>
           <option value="">Status</option>
           <option value="overdue">Overdue</option>
           <option value="soon">Due soon</option>
           <option value="ok">On track</option>
           <option value="none">No cadence</option>
         </select>
-        <select className={"select" + (show !== "active" ? " active" : "")} value={show} onChange={(e) => setShow(e.target.value)}>
+        <select className={"select" + (show !== "active" ? " active" : "")} value={show} aria-label="Show" onChange={(e) => setShow(e.target.value)}>
           <option value="active">Active</option>
           <option value="starred">Starred</option>
+          <option value="uncategorized">Uncategorized</option>
           <option value="archived">Archived</option>
           <option value="all">Everyone</option>
         </select>
-        <select className="select" value={sort} onChange={(e) => setSort(e.target.value)} title="Sort">
+        <select className={"select" + (strength ? " active" : "")} value={strength}
+          onChange={(e) => setStrength(e.target.value)} aria-label="Strength" title="Minimum relationship strength">
+          <option value="">Strength</option>
+          <option value="5">5 · inner circle</option>
+          <option value="4">4+ · close</option>
+          <option value="3">3+ · solid</option>
+          <option value="2">2+</option>
+          <option value="1">1+ · rated</option>
+        </select>
+        <select className="select" value={sort} aria-label="Sort" onChange={(e) => setSort(e.target.value)} title="Sort">
           <option value="name">A–Z</option>
           <option value="recent">Recently touched</option>
           <option value="overdue">Most overdue</option>
+          <option value="strength">Strongest ties</option>
         </select>
-        {(group || tag || status) && (
-          <button className="btn ghost sm" onClick={() => { setGroup(""); setTag(""); setStatus(""); }}>Clear</button>
+        {(group || tag || status || strength) && (
+          <button className="btn ghost sm" onClick={() => { setGroup(""); setTag(""); setStatus(""); setStrength(""); }}>Clear</button>
         )}
         <div className="view-toggle">
           <button className={"icon-btn" + (!grid ? " on" : "")} title="List" onClick={() => setPrefs({ view: "list" })}><Icon n="list" size={16} /></button>
@@ -705,6 +848,13 @@ function PeopleView({ contacts, groups, prefs, setPrefs, openProfile, addContact
                   <div className="person-name" style={{ cursor: "pointer" }}>{c.name}</div>
                   <div className="person-meta">{c.company || c.context || "—"}</div>
                 </div>
+                {(c.groups || []).length > 0 && (
+                  <div className="chip-row" style={{ justifyContent: "center" }}>
+                    {c.groups.slice(0, 2).map((g) => (
+                      <span key={g} className={"chip gc-" + colorOf(groups, g)}>{g}</span>
+                    ))}
+                  </div>
+                )}
                 {pill ? <span className={"pill " + pill.cls}>{pill.text}</span> : <span className="pill none">no cadence</span>}
               </div>
             );
@@ -730,7 +880,15 @@ function PeopleView({ contacts, groups, prefs, setPrefs, openProfile, addContact
                   </div>
                   <div className="person-side">
                     {c.archived && <span className="chip">archived</span>}
-                    {(c.tags || []).slice(0, 2).map((t) => <span key={t} className="chip">{t}</span>)}
+                    {(c.strength || 0) > 0 && (
+                      <span className="str-mini" title={STRENGTH_LABELS[c.strength]}>
+                        {[1, 2, 3, 4, 5].map((n) => <i key={n} className={n <= c.strength ? "on" : ""} />)}
+                      </span>
+                    )}
+                    {(c.groups || []).slice(0, 2).map((g) => (
+                      <span key={g} className={"chip gc-" + colorOf(groups, g)}>{g}</span>
+                    ))}
+                    {(c.tags || []).slice(0, 1).map((t) => <span key={t} className="chip">{t}</span>)}
                     {pill ? <span className={"pill " + pill.cls}>{pill.text}</span> : <span className="pill none">no cadence</span>}
                     <button className={"icon-btn star" + (c.starred ? " on" : "")} title={c.starred ? "Unstar" : "Star"}
                       onClick={() => toggleStar(c.id)}>
@@ -755,7 +913,7 @@ function PeopleView({ contacts, groups, prefs, setPrefs, openProfile, addContact
             onClick={() => { bulkApply([...sel], "tag", bulkTag.trim().toLowerCase()); setBulkTag(""); }}>Tag</button>
           <select className="select" value={bulkGroup} onChange={(e) => setBulkGroup(e.target.value)}>
             <option value="">Group…</option>
-            {groups.map((g) => <option key={g} value={g}>{g}</option>)}
+            {groups.map((g) => <option key={g.name} value={g.name}>{g.name}</option>)}
           </select>
           <button className="btn sm" disabled={!bulkGroup || !sel.size}
             onClick={() => { bulkApply([...sel], "group", bulkGroup); setBulkGroup(""); }}>Add</button>
@@ -784,13 +942,56 @@ function PeopleView({ contacts, groups, prefs, setPrefs, openProfile, addContact
 /* ============================== profile view ============================== */
 
 const CORE_FIELDS = [
-  { k: "email", label: "Email", type: "email", ph: "email@…" },
-  { k: "phone", label: "Phone", type: "tel", ph: "(555) …" },
   { k: "company", label: "Company", type: "text", ph: "Where they work" },
-  { k: "role", label: "Role", type: "text", ph: "What they do" },
+  { k: "role", label: "Title", type: "text", ph: "What they do" },
   { k: "location", label: "Location", type: "text", ph: "City" },
   { k: "birthday", label: "Birthday", type: "text", ph: "YYYY-MM-DD or MM-DD" },
+  { k: "linkedin", label: "LinkedIn", type: "text", ph: "linkedin.com/in/…" },
 ];
+
+/* Repeatable email / phone rows: always one blank row to type into. */
+function MultiField({ label, values, onChange, type, ph, actionScheme }) {
+  const rows = [...values, ""];
+  const commit = (i, v) => {
+    const next = [...values];
+    if (i >= next.length) { if (v.trim()) next.push(v.trim()); }
+    else if (v.trim()) next[i] = v.trim();
+    else next.splice(i, 1);
+    onChange(next);
+  };
+  return (
+    <div className="field multi">
+      <label>{label}</label>
+      {rows.map((v, i) => (
+        <div className="multi-row" key={i}>
+          <input type={type} defaultValue={v} placeholder={i === 0 ? ph : "add another…"}
+            key={v + ":" + i}
+            onBlur={(e) => { if (e.target.value.trim() !== v) commit(i, e.target.value); }}
+            onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); }} />
+          {v && (
+            <a className="field-act" href={actionScheme + (actionScheme === "tel:" ? v.replace(/[^+\d]/g, "") : v)}
+              title={actionScheme === "tel:" ? "Call" : "Compose email"}>
+              <Icon n={actionScheme === "tel:" ? "phone" : "mail"} size={12} />
+            </a>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Strength({ value, onChange }) {
+  return (
+    <div className="strength" role="group" aria-label="Relationship strength">
+      {[1, 2, 3, 4, 5].map((n) => (
+        <button key={n} className={"str-dot" + (n <= value ? " on" : "")}
+          title={STRENGTH_LABELS[n]} aria-label={STRENGTH_LABELS[n]}
+          onClick={() => onChange(value === n ? 0 : n)} />
+      ))}
+      <span className="str-label">{STRENGTH_LABELS[value] || STRENGTH_LABELS[0]}</span>
+    </div>
+  );
+}
 
 function ProfileView({ contact: c, groups, back, update, remove, logInteraction, snooze, addGroup, toast }) {
   const [composing, setComposing] = useState(false);
@@ -854,16 +1055,17 @@ function ProfileView({ contact: c, groups, back, update, remove, logInteraction,
               onChange={(e) => set({ context: e.target.value })} />
             <div className="chip-row">
               {groups.map((g) => {
-                const on = (c.groups || []).includes(g);
+                const on = (c.groups || []).includes(g.name);
                 return (
-                  <button key={g} className={"chip" + (on ? " on" : "")}
-                    onClick={() => set({ groups: on ? c.groups.filter((x) => x !== g) : [...(c.groups || []), g] })}>
-                    {g}
+                  <button key={g.name} className={"chip gc-" + g.color + (on ? " on" : " off")}
+                    onClick={() => set({ groups: on ? c.groups.filter((x) => x !== g.name) : [...(c.groups || []), g.name] })}>
+                    {g.name}
                   </button>
                 );
               })}
-              <ChipInput placeholder="group" onAdd={(g) => { addGroup(g); set({ groups: [...new Set([...(c.groups || []), g])] }); }} />
+              <ChipInput placeholder="category" onAdd={(g) => { addGroup(g); set({ groups: [...new Set([...(c.groups || []), g])] }); }} />
             </div>
+            <Strength value={c.strength || 0} onChange={(n) => set({ strength: n })} />
             <div className="chip-row">
               {(c.tags || []).map((t) => (
                 <span key={t} className="chip">{t}
@@ -901,16 +1103,24 @@ function ProfileView({ contact: c, groups, back, update, remove, logInteraction,
           {CADENCES.map((cd) => (
             <button key={cd.id}
               className={"type-chip" + ((c.cadence || { id: "none" }).id === cd.id ? " on" : "")}
-              onClick={() => set({ cadence: { id: cd.id, days: cd.id === "custom" ? (c.cadence?.days || 14) : cd.days } })}>
+              onClick={() => set({
+                cadence: cd.id === "custom"
+                  ? { id: "custom", n: c.cadence?.n || 3, unit: c.cadence?.unit || "weeks" }
+                  : { id: cd.id, days: cd.days },
+              })}>
               {cd.id === "custom" ? "Custom" : cd.label}
             </button>
           ))}
           {(c.cadence || {}).id === "custom" && (
-            <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--muted)" }}>
+            <label className="custom-cadence">
               every
-              <input className="days-input" type="number" min="1" max="3650" value={c.cadence.days || ""}
-                onChange={(e) => set({ cadence: { id: "custom", days: Math.max(1, +e.target.value || 0) } })} />
-              days
+              <input className="days-input" type="number" min="1" max="520"
+                value={c.cadence.n || ""}
+                onChange={(e) => set({ cadence: { ...c.cadence, id: "custom", n: Math.max(1, +e.target.value || 0) } })} />
+              <select className="select" value={c.cadence.unit || "weeks"}
+                onChange={(e) => set({ cadence: { ...c.cadence, id: "custom", unit: e.target.value } })}>
+                {Object.keys(UNIT_DAYS).map((u) => <option key={u} value={u}>{u}</option>)}
+              </select>
             </label>
           )}
         </div>
@@ -940,21 +1150,28 @@ function ProfileView({ contact: c, groups, back, update, remove, logInteraction,
       <div className="card pcard">
         <h3 className="pcard-title">Details</h3>
         <div className="fields">
+          <MultiField label="Email" values={c.emails || []} type="email" ph="email@…"
+            actionScheme="mailto:" onChange={(v) => set({ emails: v })} />
+          <MultiField label="Phone" values={c.phones || []} type="tel" ph="(555) …"
+            actionScheme="tel:" onChange={(v) => set({ phones: v })} />
           {CORE_FIELDS.map((f) => (
             <div className="field" key={f.k}>
               <label>
                 {f.label}{f.k === "birthday" && nb && c.birthday ? " · " + inDays(Math.round((nb.date - todayMid()) / DAY)) : ""}
-                {f.k === "email" && c.email && (
-                  <a className="field-act" href={"mailto:" + c.email} title="Compose email"><Icon n="mail" size={12} /></a>
-                )}
-                {f.k === "phone" && c.phone && (
-                  <a className="field-act" href={"tel:" + c.phone.replace(/[^+\d]/g, "")} title="Call"><Icon n="phone" size={12} /></a>
+                {f.k === "linkedin" && c.linkedin && (
+                  <a className="field-act" href={/^https?:/.test(c.linkedin) ? c.linkedin : "https://" + c.linkedin}
+                    target="_blank" rel="noreferrer noopener" title="Open profile"><Icon n="users" size={12} /></a>
                 )}
               </label>
               <input type={f.type} value={c[f.k] || ""} placeholder={f.ph}
                 onChange={(e) => set({ [f.k]: e.target.value })} />
             </div>
           ))}
+          <div className="field">
+            <label>Last contacted{(c.interactions || []).length ? " · from timeline" : ""}</label>
+            <input type="date" value={c.lastContactedAt || ""} max={iso(todayMid())}
+              onChange={(e) => set({ lastContactedAt: e.target.value })} />
+          </div>
           {(c.custom || []).map((cf) => (
             <div className="field" key={cf.id}>
               <label>
@@ -1184,6 +1401,38 @@ function parseCSV(text) {
   return rows;
 }
 
+function csvCell(v) {
+  const t = v == null ? "" : String(v);
+  return /[",\n\r]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
+}
+
+/* Flat, spreadsheet-friendly dump. Timelines are summarized; the JSON
+   backup remains the lossless format. */
+function contactsToCSV(contacts) {
+  const cols = [
+    ["Name", (c) => c.name],
+    ["Emails", (c) => (c.emails || []).join("; ")],
+    ["Phones", (c) => (c.phones || []).join("; ")],
+    ["Company", (c) => c.company],
+    ["Title", (c) => c.role],
+    ["Location", (c) => c.location],
+    ["LinkedIn", (c) => c.linkedin],
+    ["Categories", (c) => (c.groups || []).join("; ")],
+    ["Tags", (c) => (c.tags || []).join("; ")],
+    ["Strength", (c) => (c.strength ? String(c.strength) : "")],
+    ["Cadence", (c) => cadenceLabel(c)],
+    ["Last contacted", (c) => lastContact(c) || ""],
+    ["Interactions", (c) => String((c.interactions || []).length)],
+    ["How we met", (c) => c.context],
+    ["Birthday", (c) => c.birthday],
+    ["Notes", (c) => c.notes],
+    ["Archived", (c) => (c.archived ? "yes" : "")],
+  ];
+  const lines = [cols.map((x) => x[0]).join(",")];
+  for (const c of contacts) lines.push(cols.map(([, f]) => csvCell(f(c))).join(","));
+  return lines.join("\r\n");
+}
+
 function contactsFromCSV(text) {
   const rows = parseCSV(String(text).replace(/^﻿/, ""));
   if (rows.length < 2) return [];
@@ -1221,13 +1470,15 @@ function contactsFromCSV(text) {
       : get(idx.name);
     if (!name) continue;
     const c = blankContact(name);
-    c.email = get(idx.email); c.phone = get(idx.phone); c.company = get(idx.company);
+    const email = get(idx.email), phone = get(idx.phone);
+    if (email) c.emails = [email];
+    if (phone) c.phones = [phone];
+    c.company = get(idx.company);
     c.role = get(idx.role); c.location = get(idx.location); c.birthday = get(idx.birthday);
     c.notes = get(idx.notes); c.context = get(idx.context);
-    const url = get(idx.url);
-    if (url) c.custom.push({ id: uid(), label: "LinkedIn", value: url });
-    const connected = get(idx.connected);
-    if (connected && !c.context) c.context = "Connected on LinkedIn · " + connected;
+    c.linkedin = get(idx.url);
+    c.connectedOn = get(idx.connected);
+    if (c.connectedOn && !c.context) c.context = "Connected on LinkedIn · " + c.connectedOn;
     const tags = get(idx.tags);
     if (tags) c.tags = tags.split(/[;|]|,\s*/).map((t) => t.trim().toLowerCase()).filter(Boolean);
     out.push(c);
@@ -1235,71 +1486,22 @@ function contactsFromCSV(text) {
   return out;
 }
 
-/* ---- LinkedIn capture interchange (from the companion extension) ---- */
-
-const SITE_URL = "https://bradbartel101.github.io/PersonalDexB/";
+/* ---- import matching ---- */
 
 function normLi(u) {
   return String(u || "").toLowerCase().trim()
     .replace(/^https?:\/\/(www\.)?/, "").replace(/[?#].*$/, "").replace(/\/+$/, "");
 }
 
-function peopleFromCapture(text) {
-  let j;
-  try { j = JSON.parse(text); } catch (e) { return null; }
-  const arr = j && j.hearth === "linkedin-capture" && Array.isArray(j.people) ? j.people
-    : Array.isArray(j) ? j : null;
-  if (!arr) return null;
-  return draftsFromCaptures(arr);
-}
-
-function draftsFromCaptures(arr) {
-  return arr.filter((p) => p && typeof p.name === "string" && p.name.trim()).map((p) => {
-    const c = blankContact(p.name);
-    let role = typeof p.role === "string" ? p.role : "";
-    let company = typeof p.company === "string" ? p.company : "";
-    if ((!role || !company) && typeof p.headline === "string") {
-      const m = p.headline.match(/^(.+?)\s+(?:at|@)\s+(.+)$/i);
-      if (m) { role = role || m[1].trim(); company = company || m[2].trim(); }
-    }
-    c.role = role; c.company = company;
-    c.location = typeof p.location === "string" ? p.location : "";
-    if (!role && typeof p.headline === "string") c.context = p.headline;
-    if (typeof p.linkedin === "string" && p.linkedin)
-      c.custom.push({ id: uid(), label: "LinkedIn", value: p.linkedin });
-    c.photo = typeof p.photo === "string" && p.photo.startsWith("data:image/") ? p.photo : null;
-    return c;
-  });
-}
-
 function findImportMatch(contacts, draft) {
-  const dl = normLi((draft.custom.find((f) => f.label === "LinkedIn") || {}).value);
+  const dl = normLi(draft.linkedin);
   if (dl) {
-    const hit = contacts.find((c) => (c.custom || []).some((f) => normLi(f.value) === dl));
+    const hit = contacts.find((c) => normLi(c.linkedin) === dl);
     if (hit) return hit.id;
   }
   const n = draft.name.trim().toLowerCase().replace(/\s+/g, " ");
   const hit = contacts.find((c) => (c.name || "").trim().toLowerCase().replace(/\s+/g, " ") === n);
   return hit ? hit.id : null;
-}
-
-function shrinkDataUri(uri, max = 160) {
-  return new Promise((resolve) => {
-    if (!uri || !/^data:image\//.test(uri)) return resolve(null);
-    const img = new Image();
-    img.onload = () => {
-      try {
-        const scale = Math.min(1, max / Math.max(img.width, img.height));
-        const cv = document.createElement("canvas");
-        cv.width = Math.max(1, Math.round(img.width * scale));
-        cv.height = Math.max(1, Math.round(img.height * scale));
-        cv.getContext("2d").drawImage(img, 0, 0, cv.width, cv.height);
-        resolve(cv.toDataURL("image/jpeg", 0.85));
-      } catch (e) { resolve(uri); }
-    };
-    img.onerror = () => resolve(null);
-    img.src = uri;
-  });
 }
 
 /* ---- cloud sync (talks to /api when the app is served from a host that has one) ---- */
@@ -1333,28 +1535,61 @@ async function apiCall(path, opts = {}, pass) {
 
 /* ============================== app ============================== */
 
+/* Accepts data written by any earlier version: bare-string categories, single
+   email/phone strings, and LinkedIn URLs kept as custom fields all migrate. */
 function normalizeData(raw) {
   if (!raw || !Array.isArray(raw.contacts)) return null;
-  const base = { v: 1, groups: [], prefs: { view: "list" } };
+  const base = { v: 2, groups: [], rules: [], prefs: { view: "list" } };
   const data = { ...base, ...raw };
-  data.groups = Array.isArray(data.groups) ? data.groups : [];
+  data.groups = normalizeGroups(data.groups);
+  data.rules = Array.isArray(data.rules) ? data.rules : [];
   data.prefs = { view: "list", ...(data.prefs || {}) };
-  data.contacts = data.contacts.filter((c) => c && c.name != null).map((c) => ({
-    ...blankContact(String(c.name)), ...c,
-    id: c.id || uid(),
-    tags: Array.isArray(c.tags) ? c.tags : [],
-    groups: Array.isArray(c.groups) ? c.groups : [],
-    custom: Array.isArray(c.custom) ? c.custom : [],
-    reminders: Array.isArray(c.reminders) ? c.reminders : [],
-    dates: Array.isArray(c.dates) ? c.dates : [],
-    interactions: Array.isArray(c.interactions) ? c.interactions : [],
-    cadence: c.cadence && c.cadence.id ? c.cadence : { id: "none", days: null },
-    starred: !!c.starred,
-    archived: !!c.archived,
-    noSuggest: !!c.noSuggest,
-  }));
+
+  const strList = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === "string" && x.trim()).map((x) => x.trim()) : []);
+
+  data.contacts = data.contacts.filter((c) => c && c.name != null).map((c) => {
+    const out = {
+      ...blankContact(String(c.name)), ...c,
+      id: c.id || uid(),
+      tags: Array.isArray(c.tags) ? c.tags : [],
+      groups: (Array.isArray(c.groups) ? c.groups : []).map(groupName).filter(Boolean),
+      custom: Array.isArray(c.custom) ? c.custom : [],
+      reminders: Array.isArray(c.reminders) ? c.reminders : [],
+      dates: Array.isArray(c.dates) ? c.dates : [],
+      interactions: Array.isArray(c.interactions) ? c.interactions : [],
+      cadence: c.cadence && c.cadence.id ? c.cadence : { id: "none", days: null },
+      starred: !!c.starred,
+      archived: !!c.archived,
+      noSuggest: !!c.noSuggest,
+      strength: Number.isFinite(+c.strength) ? Math.max(0, Math.min(5, Math.round(+c.strength))) : 0,
+      emails: strList(c.emails),
+      phones: strList(c.phones),
+      lastContactedAt: typeof c.lastContactedAt === "string" ? c.lastContactedAt : "",
+      linkedin: typeof c.linkedin === "string" ? c.linkedin : "",
+      connectedOn: typeof c.connectedOn === "string" ? c.connectedOn : "",
+    };
+    // v1 single-value fields
+    if (typeof c.email === "string" && c.email.trim() && !out.emails.includes(c.email.trim()))
+      out.emails.unshift(c.email.trim());
+    if (typeof c.phone === "string" && c.phone.trim() && !out.phones.includes(c.phone.trim()))
+      out.phones.unshift(c.phone.trim());
+    delete out.email;
+    delete out.phone;
+    // v1 kept the LinkedIn URL as a custom field
+    if (!out.linkedin) {
+      const li = out.custom.find((f) => /linkedin/i.test(f.label || ""));
+      if (li && li.value) {
+        out.linkedin = li.value;
+        out.custom = out.custom.filter((f) => f !== li);
+      }
+    }
+    return out;
+  });
+
+  const known = new Set(data.groups.map((g) => g.name));
   for (const c of data.contacts)
-    for (const g of c.groups) if (!data.groups.includes(g)) data.groups.push(g);
+    for (const g of c.groups)
+      if (!known.has(g)) { known.add(g); data.groups.push({ name: g, color: data.groups.length % 8 }); }
   return data;
 }
 
@@ -1365,13 +1600,15 @@ function App() {
   const [mode, setMode] = useState("memory");
   const [exportText, setExportText] = useState(null);
   const [liOpen, setLiOpen] = useState(false);
+  const [catsOpen, setCatsOpen] = useState(false);
+  const [rulesOpen, setRulesOpen] = useState(false);
   const [review, setReview] = useState(null);
   const [impGroup, setImpGroup] = useState("");
   const [impTag, setImpTag] = useState("");
-  const [pasteText, setPasteText] = useState("");
+  const [impMode, setImpMode] = useState("new");
+  const [impRules, setImpRules] = useState(true);
   const jsonRef = useRef(null);
   const csvRef = useRef(null);
-  const capRef = useRef(null);
   const toastTimer = useRef(null);
 
   const toast = useCallback((msg) => {
@@ -1383,7 +1620,6 @@ function App() {
   /* ---- cloud sync state ---- */
   const [syncState, setSyncState] = useState(HTTP ? "probing" : "off");
   const [passDraft, setPassDraft] = useState("");
-  const [pendingCaps, setPendingCaps] = useState([]);
   const passRef = useRef(null);
   const versionRef = useRef(0);
   const skipPushRef = useRef(false);
@@ -1409,11 +1645,6 @@ function App() {
     else setSyncState("error");
   }, []);
 
-  const pullCaptures = useCallback(async () => {
-    const { status, json } = await apiCall("api/captures", {}, passRef.current);
-    if (status === 200 && json && Array.isArray(json.people)) setPendingCaps(json.people);
-  }, []);
-
   const probeSync = useCallback(async (pass, bootDoc) => {
     if (!HTTP) return;
     setSyncState("probing");
@@ -1431,9 +1662,8 @@ function App() {
         if (seed) { pendingPushRef.current = true; pushRemote(seed); }
       }
       setSyncState("synced");
-      pullCaptures();
     } else setSyncState("off");
-  }, [pushRemote, pullCaptures]);
+  }, [pushRemote]);
 
   const connectSync = useCallback((pass) => {
     const p = pass.trim();
@@ -1506,10 +1736,9 @@ function App() {
           setData(parsed);
         }
       } else if (status === 401) setSyncState("badpass");
-      pullCaptures();
     }, POLL_MS);
     return () => clearInterval(id);
-  }, [syncState, pullCaptures]);
+  }, [syncState]);
 
 
   /* load */
@@ -1609,8 +1838,83 @@ function App() {
   }, [contacts, toast]);
 
   const addGroup = useCallback((g) => {
-    setData((d) => (d.groups.includes(g) ? d : { ...d, groups: [...d.groups, g] }));
+    const name = String(g || "").trim();
+    if (!name) return;
+    setData((d) => (d.groups.some((x) => x.name === name)
+      ? d
+      : { ...d, groups: [...d.groups, { name, color: d.groups.length % 8 }] }));
   }, []);
+
+  /* ---- categories ---- */
+  const renameGroup = useCallback((oldName, nextName) => {
+    const name = String(nextName || "").trim();
+    if (!name || name === oldName) return;
+    setData((d) => {
+      if (d.groups.some((g) => g.name === name)) return d;
+      return {
+        ...d,
+        groups: d.groups.map((g) => (g.name === oldName ? { ...g, name } : g)),
+        contacts: d.contacts.map((c) => (c.groups || []).includes(oldName)
+          ? { ...c, groups: c.groups.map((x) => (x === oldName ? name : x)) } : c),
+        rules: (d.rules || []).map((r) => (r.group === oldName ? { ...r, group: name } : r)),
+      };
+    });
+  }, []);
+
+  const recolorGroup = useCallback((name, color) => {
+    setData((d) => ({ ...d, groups: d.groups.map((g) => (g.name === name ? { ...g, color } : g)) }));
+  }, []);
+
+  const deleteGroup = useCallback((name) => {
+    setData((d) => ({
+      ...d,
+      groups: d.groups.filter((g) => g.name !== name),
+      contacts: d.contacts.map((c) => (c.groups || []).includes(name)
+        ? { ...c, groups: c.groups.filter((x) => x !== name) } : c),
+      rules: (d.rules || []).filter((r) => r.group !== name),
+    }));
+    toast("Removed category " + name);
+  }, [toast]);
+
+  /* ---- auto-categorization rules ---- */
+  const saveRule = useCallback((rule) => {
+    setData((d) => {
+      const exists = (d.rules || []).some((r) => r.id === rule.id);
+      const rules = exists
+        ? d.rules.map((r) => (r.id === rule.id ? rule : r))
+        : [...(d.rules || []), rule];
+      const groups = rule.group && !d.groups.some((g) => g.name === rule.group)
+        ? [...d.groups, { name: rule.group, color: d.groups.length % 8 }]
+        : d.groups;
+      return { ...d, rules, groups };
+    });
+  }, []);
+
+  const deleteRule = useCallback((id) => {
+    setData((d) => ({ ...d, rules: (d.rules || []).filter((r) => r.id !== id) }));
+  }, []);
+
+  /* Apply every rule across the book; only ever adds, never removes. */
+  const runRules = useCallback(() => {
+    let touched = 0;
+    setData((d) => {
+      const contactsNext = d.contacts.map((c) => {
+        if (c.archived) return c;
+        const auto = suggestFromRules(c, d.rules);
+        const addG = auto.groups.filter((g) => !(c.groups || []).includes(g));
+        const addT = auto.tags.filter((t) => !(c.tags || []).includes(t));
+        if (!addG.length && !addT.length) return c;
+        touched++;
+        return { ...c, sample: false, groups: [...(c.groups || []), ...addG], tags: [...(c.tags || []), ...addT] };
+      });
+      let groups = d.groups;
+      for (const r of d.rules || [])
+        if (r.group && !groups.some((g) => g.name === r.group))
+          groups = [...groups, { name: r.group, color: groups.length % 8 }];
+      return { ...d, contacts: contactsNext, groups };
+    });
+    setTimeout(() => toast(touched ? "Categorized " + touched + " " + (touched === 1 ? "person" : "people") : "No new matches — everyone already filed"), 0);
+  }, [toast]);
 
   const acceptSuggest = useCallback((id, cadId) => {
     const def = CADENCES.find((x) => x.id === cadId);
@@ -1669,8 +1973,11 @@ function App() {
       const merged = { ...target, sample: false };
       for (const r of group) {
         if (r.id === target.id) continue;
-        for (const k of ["context", "email", "phone", "company", "role", "location", "birthday", "photo"])
+        for (const k of ["context", "company", "role", "location", "birthday", "photo", "linkedin", "connectedOn"])
           if (!merged[k]) merged[k] = r[k];
+        for (const k of ["emails", "phones"])
+          merged[k] = [...new Set([...(merged[k] || []), ...(r[k] || [])])];
+        merged.strength = Math.max(merged.strength || 0, r.strength || 0);
         merged.notes = [merged.notes, r.notes].filter(Boolean).join("\n\n");
         merged.tags = [...new Set([...(merged.tags || []), ...(r.tags || [])])];
         merged.groups = [...new Set([...(merged.groups || []), ...(r.groups || [])])];
@@ -1696,9 +2003,11 @@ function App() {
   }, [toast]);
 
   /* export / import */
-  const doExport = async () => {
-    const payload = JSON.stringify({ ...data, exportedAt: new Date().toISOString() }, null, 2);
-    const filename = "hearth-backup-" + iso(todayMid()) + ".json";
+  const doExport = async (kind = "json") => {
+    const payload = kind === "csv"
+      ? contactsToCSV(data.contacts)
+      : JSON.stringify({ ...data, exportedAt: new Date().toISOString() }, null, 2);
+    const filename = "hearth-" + (kind === "csv" ? "contacts-" : "backup-") + iso(todayMid()) + "." + kind;
     const dl = !__STANDALONE__ && window.claude && window.claude.downloads;
     if (dl && typeof dl.save === "function") {
       try {
@@ -1713,7 +2022,7 @@ function App() {
     }
     try {
       const a = document.createElement("a");
-      a.href = URL.createObjectURL(new Blob([payload], { type: "application/json" }));
+      a.href = URL.createObjectURL(new Blob([payload], { type: kind === "csv" ? "text/csv" : "application/json" }));
       a.download = filename;
       document.body.appendChild(a);
       a.click();
@@ -1744,16 +2053,15 @@ function App() {
     r.readAsText(file);
   };
 
-  const openReview = useCallback(async (drafts, source) => {
-    const items = await Promise.all(drafts.map(async (draft) => {
-      if (draft.photo) draft.photo = await shrinkDataUri(draft.photo);
-      return { draft, matchId: findImportMatch(contacts, draft), selected: true };
+  const openReview = useCallback((drafts, source) => {
+    const items = drafts.map((draft) => ({
+      draft, matchId: findImportMatch(contacts, draft), selected: true,
     }));
     setImpGroup("");
-    setImpTag(source === "linkedin" ? "linkedin" : "");
+    setImpTag("");
+    setImpMode("new");
     setReview({ source, items });
     setLiOpen(true);
-    setPasteText("");
   }, [contacts]);
 
   const onCSVFile = (e) => {
@@ -1769,69 +2077,66 @@ function App() {
     r.readAsText(file);
   };
 
-  const onCaptureFile = (e) => {
-    const file = e.target.files && e.target.files[0];
-    e.target.value = "";
-    if (!file) return;
-    const r = new FileReader();
-    r.onload = () => {
-      const drafts = peopleFromCapture(String(r.result));
-      if (!drafts || !drafts.length) { toast("That file isn't a Hearth capture export"); return; }
-      openReview(drafts, "linkedin");
-    };
-    r.readAsText(file);
-  };
-
-  const onPaste = () => {
-    const drafts = peopleFromCapture(pasteText);
-    if (!drafts || !drafts.length) { toast("That doesn't look like JSON from the Hearth extension"); return; }
-    openReview(drafts, "linkedin");
-  };
+  /* An import row actually lands only if it is ticked and not skipped by
+     "add new only" mode. */
+  const importable = review
+    ? review.items.filter((it) => it.selected && !(impMode === "new" && it.matchId))
+    : [];
+  const newCount = review ? review.items.filter((it) => !it.matchId).length : 0;
+  const matchCount = review ? review.items.filter((it) => it.matchId).length : 0;
+  const willImport = importable.length;
 
   const applyImport = () => {
     if (!review) return;
     const group = impGroup.trim();
     const tag = impTag.trim().toLowerCase();
-    const chosen = review.items.filter((i) => i.selected);
+    const rules = impRules ? data.rules : [];
+    const chosen = importable;
     const updated = chosen.filter((i) => i.matchId).length;
     const added = chosen.length - updated;
+    const usedGroups = new Set();
+
+    const decorate = (target, draft) => {
+      const auto = suggestFromRules(draft, rules);
+      const groupsToAdd = [...auto.groups, ...(group ? [group] : [])];
+      const tagsToAdd = [...auto.tags, ...(tag ? [tag] : [])];
+      for (const g of groupsToAdd) usedGroups.add(g);
+      target.groups = [...new Set([...(target.groups || []), ...groupsToAdd])];
+      target.tags = [...new Set([...(target.tags || []), ...tagsToAdd])];
+    };
+
     setData((d) => {
       let list = [...d.contacts];
-      for (const it of review.items) {
-        if (!it.selected) continue;
+      for (const it of chosen) {
         if (it.matchId && list.some((c) => c.id === it.matchId)) {
           list = list.map((c) => {
             if (c.id !== it.matchId) return c;
             const m = { ...c, sample: false };
-            if (it.draft.photo) m.photo = it.draft.photo;
-            for (const k of ["company", "role", "location", "context", "email", "phone"])
+            // Fill blanks only — never overwrite something you have already curated.
+            for (const k of ["company", "role", "location", "context", "birthday", "linkedin", "connectedOn"])
               if (!m[k] && it.draft[k]) m[k] = it.draft[k];
-            const dl = it.draft.custom.find((f) => f.label === "LinkedIn");
-            if (dl && !(m.custom || []).some((f) => normLi(f.value) === normLi(dl.value)))
-              m.custom = [...(m.custom || []), dl];
+            for (const k of ["emails", "phones"])
+              m[k] = [...new Set([...(m[k] || []), ...(it.draft[k] || [])])];
             for (const t of it.draft.tags || []) m.tags = [...new Set([...(m.tags || []), t])];
-            if (group) m.groups = [...new Set([...(m.groups || []), group])];
-            if (tag) m.tags = [...new Set([...(m.tags || []), tag])];
+            decorate(m, it.draft);
             return m;
           });
         } else {
           const c = { ...it.draft };
-          if (group) c.groups = [...new Set([...(c.groups || []), group])];
-          if (tag) c.tags = [...new Set([...(c.tags || []), tag])];
+          decorate(c, it.draft);
           list.push(c);
         }
       }
-      const groups = group && !d.groups.includes(group) ? [...d.groups, group] : d.groups;
+      let groups = d.groups;
+      for (const g of usedGroups)
+        if (!groups.some((x) => x.name === g)) groups = [...groups, { name: g, color: groups.length % 8 }];
       return { ...d, contacts: list, groups };
     });
-    if (review.source === "cloud") {
-      apiCall("api/captures", { method: "DELETE" }, passRef.current).catch(() => {});
-      setPendingCaps([]);
-    }
     setReview(null);
     setLiOpen(false);
-    setRoute({ name: "people" });
-    toast("Imported " + added + " new" + (updated ? ", updated " + updated + " existing" : ""));
+    setRoute({ name: "people", show: added && !updated ? "uncategorized" : "active" });
+    toast("Imported " + added + " new" + (updated ? ", updated " + updated + " existing" : "")
+      + (review.items.length - chosen.length ? " · " + (review.items.length - chosen.length) + " skipped" : ""));
   };
 
   const sampleCount = contacts.filter((c) => c.sample).length;
@@ -1917,13 +2222,6 @@ function App() {
             )}
           </div>
         )}
-        {pendingCaps.length > 0 && (
-          <button className="rail-tool cap-alert"
-            onClick={() => openReview(draftsFromCaptures(pendingCaps), "cloud")}>
-            <Icon n="users" size={15} />
-            <span>Review {pendingCaps.length} LinkedIn capture{pendingCaps.length === 1 ? "" : "s"}</span>
-          </button>
-        )}
         <div className="rail-stats">
           <div className="rail-stat"><span>In your circle</span><b>{stats.total}</b></div>
           <div className="rail-stat"><span>Overdue</span><b className={stats.overdue ? "hot" : ""}>{stats.overdue}</b></div>
@@ -1932,7 +2230,14 @@ function App() {
           )}
         </div>
         <div className="rail-tools">
-          <button className="rail-tool" onClick={doExport}><Icon n="download" size={15} /><span>Export backup</span></button>
+          <button className="rail-tool" onClick={() => setCatsOpen(true)}>
+            <Icon n="tag" size={15} /><span>Categories</span>
+          </button>
+          <button className="rail-tool" onClick={() => setRulesOpen(true)}>
+            <Icon n="wand" size={15} /><span>Auto-categorize rules</span>
+          </button>
+          <button className="rail-tool" onClick={() => doExport("json")}><Icon n="download" size={15} /><span>Export backup (JSON)</span></button>
+          <button className="rail-tool" onClick={() => doExport("csv")}><Icon n="download" size={15} /><span>Export contacts (CSV)</span></button>
           <button className="rail-tool" onClick={() => jsonRef.current && jsonRef.current.click()}><Icon n="upload" size={15} /><span>Restore JSON</span></button>
           <button className="rail-tool" onClick={() => { setReview(null); setLiOpen(true); }}><Icon n="users" size={15} /><span>LinkedIn / CSV import</span></button>
           <button className="rail-tool" onClick={() => setDupOpen(true)}>
@@ -1948,7 +2253,6 @@ function App() {
         <div className="rail-hint"><kbd>n</kbd> new person · <kbd>/</kbd> search · <kbd>esc</kbd> back</div>
         <input ref={jsonRef} type="file" accept=".json,application/json" style={{ display: "none" }} onChange={onJSONFile} />
         <input ref={csvRef} type="file" accept=".csv,text/csv" style={{ display: "none" }} onChange={onCSVFile} />
-        <input ref={capRef} type="file" accept=".json,application/json" style={{ display: "none" }} onChange={onCaptureFile} />
       </aside>
 
       <main>
@@ -1961,16 +2265,17 @@ function App() {
           </div>
         )}
         {route.name === "today" && (
-          <TodayView contacts={contacts.filter((c) => !c.archived)}
+          <TodayView contacts={contacts.filter((c) => !c.archived)} groups={data.groups}
             openProfile={(id) => setRoute({ name: "profile", id, from: "today" })}
             logInteraction={logInteraction} snooze={snooze} completeReminder={completeReminder}
-            acceptSuggest={acceptSuggest} dismissSuggest={dismissSuggest} />
+            acceptSuggest={acceptSuggest} dismissSuggest={dismissSuggest}
+            openPeople={(show) => setRoute({ name: "people", show })} />
         )}
         {route.name === "people" && (
           <PeopleView contacts={contacts} groups={data.groups} prefs={data.prefs}
             setPrefs={(p) => setData((d) => ({ ...d, prefs: { ...d.prefs, ...p } }))}
             openProfile={(id) => setRoute({ name: "profile", id, from: "people" })}
-            addContact={addContact} focusSignal={route.focus}
+            addContact={addContact} focusSignal={route.focus} initialShow={route.show}
             toggleStar={toggleStar} bulkApply={bulkApply} />
         )}
         {route.name === "history" && (
@@ -1993,49 +2298,27 @@ function App() {
       {liOpen && !review && (
         <div className="overlay" onClick={() => setLiOpen(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h3>Bring in people from LinkedIn</h3>
+            <h3>Import from LinkedIn</h3>
             <p>
-              LinkedIn's API doesn't let apps read your connections or photos, so Hearth works the way
-              Dex does — through your own browser. Two channels:
+              Hearth imports from LinkedIn's own data export — no scraping, no signing in on your
+              behalf, nothing that can get your account flagged.
             </p>
-            <div className="li-channel">
-              <b>1 · Profiles with photos — browser extension</b>
-              <p>Install the Hearth capture extension, browse any profile on LinkedIn, click
-                <b> Save to Hearth</b>, then bring the captures here. Photos, headline, company, and
-                location come along, and existing people are updated in place.</p>
-              <div className="li-actions">
-                <a className="btn sm" href={HTTP ? "hearth-extension.zip" : SITE_URL + "hearth-extension.zip"} download>
-                  <Icon n="download" size={14} />Get the extension
-                </a>
-                <button className="btn sm" onClick={() => capRef.current && capRef.current.click()}>
-                  <Icon n="upload" size={14} />Import captured JSON…
-                </button>
-              </div>
-              {syncState === "synced" && (
-                <p className="li-tip">
-                  Easiest path: open the extension popup once and paste this site's address plus your
-                  workspace passphrase under <b>Connect to Hearth</b>. From then on, "Save to Hearth" on
-                  LinkedIn sends people straight here — a review button appears in the sidebar.
-                </p>
-              )}
-              <textarea className="li-paste" rows={3} value={pasteText}
-                placeholder='…or paste the JSON from the extension popup ("Copy JSON") here'
-                onChange={(e) => setPasteText(e.target.value)} />
-              {pasteText.trim() && (
-                <button className="btn primary sm" onClick={onPaste}>Review pasted captures</button>
-              )}
+            <ol className="li-steps">
+              <li>On LinkedIn: <b>Settings &amp; Privacy → Data privacy → Get a copy of your data</b>.</li>
+              <li>Choose <b>Want something in particular?</b> and tick <b>Connections</b>. Request the archive.</li>
+              <li>LinkedIn emails you a download link (usually ~10 minutes). Unzip it to find <b>Connections.csv</b>.</li>
+              <li>Drop that file in below. You'll get a review screen before anything is saved.</li>
+            </ol>
+            <div className="li-actions">
+              <button className="btn primary sm" onClick={() => csvRef.current && csvRef.current.click()}>
+                <Icon n="upload" size={14} />Choose Connections.csv…
+              </button>
             </div>
-            <div className="li-channel">
-              <b>2 · Your whole network — Connections.csv</b>
-              <p>LinkedIn → Settings → Data privacy → <i>Get a copy of your data</i> → Connections.
-                No photos in the export (LinkedIn doesn't include them), but names, companies, roles,
-                and profile URLs import cleanly.</p>
-              <div className="li-actions">
-                <button className="btn sm" onClick={() => csvRef.current && csvRef.current.click()}>
-                  <Icon n="upload" size={14} />Import Connections.csv…
-                </button>
-              </div>
-            </div>
+            <p className="li-tip">
+              Re-importing later is safe and expected: matches are found by LinkedIn URL first, then by
+              name, so a fresh export adds only the people you've met since. Any CSV with a
+              <b> name</b> column works too — Google Contacts, a spreadsheet, anything.
+            </p>
             <div className="modal-actions">
               <button className="btn" onClick={() => setLiOpen(false)}>Close</button>
             </div>
@@ -2045,45 +2328,126 @@ function App() {
 
       {liOpen && review && (
         <div className="overlay" onClick={() => { setReview(null); setLiOpen(false); }}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
+          <div className="modal wide" onClick={(e) => e.stopPropagation()}>
             <h3>Review import</h3>
             <p>
-              {review.items.filter((i) => i.selected).length} of {review.items.length} selected ·{" "}
-              {review.items.filter((i) => i.matchId).length} match people you already have and will be
-              updated in place, photos included.
+              Found <b>{review.items.length}</b> rows · <b>{newCount}</b> new ·{" "}
+              <b>{matchCount}</b> already in Hearth.
             </p>
+            <div className="li-modes">
+              <button className={"type-chip" + (impMode === "new" ? " on" : "")}
+                onClick={() => setImpMode("new")}>Add new only</button>
+              <button className={"type-chip" + (impMode === "both" ? " on" : "")}
+                onClick={() => setImpMode("both")}>Add new + update existing</button>
+            </div>
             <div className="li-options">
               <input className="bulk-input" style={{ width: 150 }} list="import-groups" value={impGroup}
-                placeholder="Add all to group…" onChange={(e) => setImpGroup(e.target.value)} />
+                placeholder="Add all to category…" onChange={(e) => setImpGroup(e.target.value)} />
               <datalist id="import-groups">
-                {data.groups.map((g) => <option key={g} value={g} />)}
+                {data.groups.map((g) => <option key={g.name} value={g.name} />)}
               </datalist>
               <input className="bulk-input" style={{ width: 110 }} value={impTag}
                 placeholder="Apply tag…" onChange={(e) => setImpTag(e.target.value)} />
+              <label className="li-check">
+                <input type="checkbox" checked={impRules}
+                  onChange={(e) => setImpRules(e.target.checked)} />
+                Auto-categorize with my rules
+              </label>
             </div>
             <div className="li-review">
-              {review.items.map((it, i) => (
-                <label className="li-item" key={i}>
-                  <input type="checkbox" className="row-check" checked={it.selected}
-                    onChange={() => setReview((r) => ({
-                      ...r,
-                      items: r.items.map((x, j) => (j === i ? { ...x, selected: !x.selected } : x)),
-                    }))} />
-                  <Avatar c={it.draft} size={32} />
-                  <span className="li-who">
-                    <b>{it.draft.name}</b>
-                    <span>{[it.draft.role, it.draft.company, it.draft.location].filter(Boolean).join(" · ") || it.draft.context || "—"}</span>
-                  </span>
-                  {it.matchId && <span className="pill ok">updates existing</span>}
-                </label>
-              ))}
+              {review.items.map((it, i) => {
+                const skipped = impMode === "new" && it.matchId;
+                const auto = impRules ? suggestFromRules(it.draft, data.rules) : { groups: [], tags: [] };
+                return (
+                  <label className={"li-item" + (skipped ? " skipped" : "")} key={i}>
+                    <input type="checkbox" className="row-check" checked={it.selected && !skipped}
+                      disabled={skipped}
+                      onChange={() => setReview((r) => ({
+                        ...r,
+                        items: r.items.map((x, j) => (j === i ? { ...x, selected: !x.selected } : x)),
+                      }))} />
+                    <Avatar c={it.draft} size={32} />
+                    <span className="li-who">
+                      <b>{it.draft.name}</b>
+                      <span>{[it.draft.role, it.draft.company, it.draft.location].filter(Boolean).join(" · ") || it.draft.context || "—"}</span>
+                    </span>
+                    {auto.groups.map((g) => (
+                      <span key={g} className={"chip gc-" + colorOf(data.groups, g)}>{g}</span>
+                    ))}
+                    {it.matchId && (
+                      <span className={"pill " + (skipped ? "none" : "ok")}>
+                        {skipped ? "skipped" : "updates existing"}
+                      </span>
+                    )}
+                  </label>
+                );
+              })}
             </div>
             <div className="modal-actions">
+              <button className="btn ghost sm" onClick={() => setReview((r) => ({
+                ...r, items: r.items.map((x) => ({ ...x, selected: !r.items.every((y) => y.selected) })),
+              }))}>Toggle all</button>
               <button className="btn" onClick={() => setReview(null)}>Back</button>
-              <button className="btn primary" disabled={!review.items.some((i) => i.selected)}
+              <button className="btn primary" disabled={!willImport}
                 onClick={applyImport}>
-                Import {review.items.filter((i) => i.selected).length}
+                Import {willImport}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {catsOpen && (
+        <div className="overlay" onClick={() => setCatsOpen(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3>Categories</h3>
+            <p>Rename, recolor, or remove. Renaming updates everyone already filed under it.</p>
+            <div className="cat-list">
+              {data.groups.map((g) => (
+                <CategoryRow key={g.name} group={g} count={contacts.filter((c) => (c.groups || []).includes(g.name)).length}
+                  onRename={(n) => renameGroup(g.name, n)} onRecolor={(col) => recolorGroup(g.name, col)}
+                  onDelete={() => deleteGroup(g.name)} />
+              ))}
+              {data.groups.length === 0 && <p className="li-tip">No categories yet — add one below.</p>}
+            </div>
+            <form className="rem-add" onSubmit={(e) => {
+              e.preventDefault();
+              const v = e.target.elements.newcat.value.trim();
+              if (v) { addGroup(v); e.target.reset(); }
+            }}>
+              <input type="text" name="newcat" placeholder="New category…" />
+              <button className="btn sm" type="submit">Add</button>
+            </form>
+            <div className="modal-actions">
+              <button className="btn primary" onClick={() => setCatsOpen(false)}>Done</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {rulesOpen && (
+        <div className="overlay" onClick={() => setRulesOpen(false)}>
+          <div className="modal wide" onClick={(e) => e.stopPropagation()}>
+            <h3>Auto-categorize rules</h3>
+            <p>
+              When a company or title contains one of your keywords, the person gets that category.
+              Rules run on import (when the box is ticked) and whenever you hit <b>Run on everyone</b>.
+            </p>
+            <div className="rule-list">
+              {(data.rules || []).map((r) => (
+                <RuleRow key={r.id} rule={r} groups={data.groups} contacts={contacts}
+                  onSave={saveRule} onDelete={() => deleteRule(r.id)} />
+              ))}
+              {(data.rules || []).length === 0 && <p className="li-tip">No rules yet.</p>}
+            </div>
+            <div className="modal-actions">
+              <button className="btn sm" onClick={() => saveRule({
+                id: uid(), keywords: "", field: "any", group: data.groups[0] ? data.groups[0].name : "Work", tag: "",
+              })}>
+                <Icon n="plus" size={13} />Add rule
+              </button>
+              <button className="btn sm" onClick={runRules}><Icon n="wand" size={13} />Run on everyone</button>
+              <button className="btn primary" onClick={() => setRulesOpen(false)}>Done</button>
             </div>
           </div>
         </div>

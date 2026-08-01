@@ -2,15 +2,16 @@
   "name": "hearth-personal-crm",
   "version": "1.0.0",
   "private": true,
-  "description": "Hearth \u2014 a calm personal CRM built as a single self-contained HTML artifact",
+  "description": "Hearth \u2014 a personal CRM: cadences, categories, LinkedIn CSV import, daily digest",
   "type": "module",
   "scripts": {
     "build": "node build.mjs",
     "test:standalone": "node smoke.mjs hearth-standalone.html",
-    "test": "node smoke.mjs && node pro.mjs && node litest.mjs && node exttest.mjs && node autotest.mjs && node synctest.mjs",
+    "test": "node smoke.mjs && node pro.mjs && node modeltest.mjs && node litest.mjs && node autotest.mjs && node synctest.mjs",
     "build:site": "node build.mjs && node scripts/site.mjs",
     "test:sync": "node synctest.mjs",
-    "test:auto": "node autotest.mjs"
+    "test:auto": "node autotest.mjs",
+    "test:model": "node modeltest.mjs"
   },
   "dependencies": {
     "react": "^19.2.4",

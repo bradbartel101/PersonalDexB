@@ -17,8 +17,57 @@ export const ITYPES = [
   { id: "coffee", label: "Coffee", icon: "coffee" },
   { id: "message", label: "Message", icon: "message" },
   { id: "email", label: "Email", icon: "mail" },
+  { id: "event", label: "Event", icon: "calendar" },
   { id: "note", label: "Note", icon: "note" },
 ];
+
+/* Category colors index into the avatar palette tokens, so every colour
+   already has a tuned light and dark variant. */
+export const GROUP_COLORS = [
+  "Sage", "Violet", "Amber", "Steel", "Rose", "Olive", "Plum", "Indigo",
+];
+
+export const DEFAULT_GROUPS = [
+  { name: "Family", color: 4 },
+  { name: "Close Friends", color: 0 },
+  { name: "Work", color: 3 },
+  { name: "Recruiting", color: 5 },
+  { name: "Investors", color: 2 },
+  { name: "Clients", color: 6 },
+];
+
+/* Editable keyword rules that suggest a category from company / title. */
+export const DEFAULT_RULES = [
+  { id: "r-investors", keywords: "ventures, capital, partners, vc, fund", field: "company", group: "Investors", tag: "" },
+  { id: "r-recruiting", keywords: "recruiter, recruiting, talent, sourcer", field: "title", group: "Recruiting", tag: "" },
+  { id: "r-work", keywords: "engineer, designer, product manager, founder, cto, ceo", field: "title", group: "Work", tag: "" },
+  { id: "r-clients", keywords: "consulting, agency, studio", field: "company", group: "Clients", tag: "" },
+];
+
+export function ruleMatches(rule, contact) {
+  if (!rule || rule.enabled === false) return false;
+  const words = String(rule.keywords || "")
+    .split(",").map((w) => w.trim().toLowerCase()).filter(Boolean);
+  if (!words.length) return false;
+  const company = String(contact.company || "").toLowerCase();
+  const title = String(contact.role || "").toLowerCase();
+  const hay = rule.field === "company" ? company
+    : rule.field === "title" ? title
+      : company + " " + title;
+  if (!hay.trim()) return false;
+  return words.some((w) => hay.includes(w));
+}
+
+/* Categories + tags a rule set would assign to a contact. */
+export function suggestFromRules(contact, rules) {
+  const groups = [], tags = [];
+  for (const r of rules || []) {
+    if (!ruleMatches(r, contact)) continue;
+    if (r.group && !groups.includes(r.group)) groups.push(r.group);
+    if (r.tag && !tags.includes(r.tag)) tags.push(r.tag);
+  }
+  return { groups, tags };
+}
 
 export function todayMid() { const d = new Date(); d.setHours(0, 0, 0, 0); return d; }
 export function pad(n) { return String(n).padStart(2, "0"); }
@@ -76,21 +125,36 @@ export function nextBirthday(s) {
   return { date: d, turns: b.y ? d.getFullYear() - b.y : null };
 }
 
+/* Newest of: logged interactions, or a manually set "last contacted" date
+   (which a fresh CSV import can carry before any interaction exists). */
 export function lastContact(c) {
   let best = null;
   for (const it of c.interactions || []) if (!best || it.date > best) best = it.date;
+  if (c.lastContactedAt && (!best || c.lastContactedAt > best)) best = c.lastContactedAt;
   return best;
+}
+
+export const UNIT_DAYS = { days: 1, weeks: 7, months: 30 };
+export function customDays(cad) {
+  if (!cad) return null;
+  if (cad.n > 0 && cad.unit && UNIT_DAYS[cad.unit]) return cad.n * UNIT_DAYS[cad.unit];
+  return cad.days > 0 ? cad.days : null; // pre-unit records
 }
 export function cadenceDays(c) {
   const cad = c.cadence || { id: "none" };
   if (cad.id === "none") return null;
-  if (cad.id === "custom") return cad.days > 0 ? cad.days : null;
+  if (cad.id === "custom") return customDays(cad);
   const def = CADENCES.find((x) => x.id === cad.id);
   return def ? def.days : null;
 }
 export function cadenceLabel(c) {
   const cad = c.cadence || { id: "none" };
-  if (cad.id === "custom" && cad.days > 0) return "every " + cad.days + "d";
+  if (cad.id === "custom") {
+    const d = customDays(cad);
+    if (!d) return "";
+    if (cad.n > 0 && cad.unit) return "every " + cad.n + " " + (cad.n === 1 ? cad.unit.replace(/s$/, "") : cad.unit);
+    return "every " + d + "d";
+  }
   const def = CADENCES.find((x) => x.id === cad.id);
   return def && def.days ? def.label.toLowerCase() : "";
 }
@@ -139,6 +203,24 @@ export function suggestCadence(c) {
     if (Math.abs(Math.log(gap / cand.days)) < Math.abs(Math.log(gap / best.days))) best = cand;
   }
   return { id: best.id, gap, label: CADENCES.find((x) => x.id === best.id).label };
+}
+
+/* Categories are stored as {name, color}; older data used bare strings. */
+export function groupName(g) { return typeof g === "string" ? g : (g && g.name) || ""; }
+export function normalizeGroups(list) {
+  const out = [], seen = new Set();
+  for (const g of Array.isArray(list) ? list : []) {
+    const name = groupName(g).trim();
+    if (!name || seen.has(name.toLowerCase())) continue;
+    seen.add(name.toLowerCase());
+    const color = typeof g === "object" && Number.isInteger(g.color) ? g.color : out.length % 8;
+    out.push({ name, color: ((color % 8) + 8) % 8 });
+  }
+  return out;
+}
+export function colorOf(groups, name) {
+  const g = (groups || []).find((x) => groupName(x) === name);
+  return g && Number.isInteger(g.color) ? g.color : 0;
 }
 
 export function findDuplicates(contacts) {

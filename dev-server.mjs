@@ -8,7 +8,6 @@ process.env.HEARTH_PASSPHRASE = process.env.HEARTH_PASSPHRASE || "test-pass";
 process.env.HEARTH_STORE_FILE = process.env.HEARTH_STORE_FILE || "./devstore.json";
 
 const { default: dataHandler } = await import("./api/data.js");
-const { default: capturesHandler } = await import("./api/captures.js");
 const { default: pushHandler } = await import("./api/push.js");
 const { default: notifyHandler } = await import("./api/notify.js");
 
@@ -33,7 +32,6 @@ const server = http.createServer(async (req, res) => {
 
   try {
     if (url.pathname === "/api/data") return await dataHandler(req, res);
-    if (url.pathname === "/api/captures") return await capturesHandler(req, res);
     if (url.pathname === "/api/push") return await pushHandler(req, res);
     if (url.pathname === "/api/notify") return await notifyHandler(req, res);
   } catch (e) {

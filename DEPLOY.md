@@ -1,43 +1,49 @@
-# Deploying Hearth with shared cloud sync
+# Deploying Hearth
 
-The repo is Vercel-ready: static app in `public/`, API in `api/`, config in `vercel.json`. About five minutes, all free tier.
+Optional. The app is fully functional as a local file — deploying adds sync across your devices, sharing, and the daily digest notification.
 
-## 1. Deploy to Vercel
+## Vercel (recommended, ~5 minutes, free tier)
 
-1. Go to [vercel.com](https://vercel.com) → **Sign up with GitHub**.
+**1. Deploy**
+1. [vercel.com](https://vercel.com) → **Sign up with GitHub**.
 2. **Add New… → Project** → import `bradbartel101/PersonalDexB` → framework preset **Other** (it reads `vercel.json`) → **Deploy**.
-3. You'll get a URL like `https://personal-dex-b.vercel.app`. The app works immediately in local-only mode; sync needs the next two steps.
+3. You get a URL like `https://personal-dex-b.vercel.app`. It works immediately in local-only mode.
 
-## 2. Add the database
+**2. Add the database**
+- Project → **Storage → Create Database → Upstash (Redis)** → free plan → **Connect**.
+  This injects the Redis credentials automatically (`KV_REST_API_*` or `UPSTASH_REDIS_REST_*` — the API accepts either).
 
-1. In the project: **Storage → Create Database → Upstash (Redis)** → free plan → **Connect**.
-   This injects the Redis env vars (`KV_REST_API_URL`/`KV_REST_API_TOKEN` or `UPSTASH_REDIS_REST_*` — the API accepts either).
+**3. Set environment variables** — Settings → Environment Variables:
+- `HEARTH_PASSPHRASE` — a passphrase you choose. **This is the entire login**, so make it long.
+- `CRON_SECRET` — any random string. Vercel sends it with the daily digest cron.
 
-## 3. Set the environment variables
+**4. Redeploy** — Deployments → ⋯ → **Redeploy**, so the variables take effect.
 
-1. **Settings → Environment Variables** → add `HEARTH_PASSPHRASE` = a passphrase you choose (this is the whole login — make it long).
-2. Add `CRON_SECRET` = any random string. Vercel automatically sends it with the daily cron that fires the reminder digest (`vercel.json` schedules `/api/notify` at 15:00 UTC ≈ 8am Pacific — edit the schedule there if you want a different hour).
-3. **Deployments → ⋯ → Redeploy** so the env vars take effect.
+**5. Use it**
+- Open the site, enter the passphrase once per device. Everyone with the URL + passphrase shares one live workspace.
+- **iPad / phone**: Safari → Share → **Add to Home Screen**. Hearth installs as an app with an offline shell.
+- **Daily reminders**: sidebar → **Enable daily reminders**, per device. Fires each morning (15:00 UTC; change the schedule in `vercel.json`) only on days someone is actually due. On iOS this requires opening the Home-Screen-installed app first — an Apple rule, not ours. VAPID keys generate themselves server-side.
 
-## 4. Use it
+## GitHub Pages
 
-- Open the site → the sidebar asks for the passphrase → enter it once per device (phone, iPad, laptop). Everyone with the URL + passphrase shares one live workspace.
-- **iPad / phone**: use Safari's Share → **Add to Home Screen** — Hearth installs as an app (icon, standalone window, offline shell).
-- **Daily reminders**: click **Enable daily reminders** in the sidebar on each device that should get the morning digest ("3 people to reach out to · Maya, James, Sam"). Quiet days send nothing. On iPhone/iPad, notifications require the Home-Screen-installed app (an iOS rule), so install first, then enable inside it. VAPID keys generate themselves server-side — no key setup.
-- **Extension**: popup → **Connect to Hearth** → paste the site URL + passphrase. From then on, "Save to Hearth" on LinkedIn sends captures straight to the site — a **Review captures** button appears in the sidebar on every device.
+Already wired: `.github/workflows/deploy.yml` publishes `public/` to the `gh-pages` branch on every push to the main branch, serving at
+`https://bradbartel101.github.io/PersonalDexB/`.
 
-## Security model (read this once)
+Pages has no backend, so this build is **local-only per device** — no sync, no push. Good as a always-available bookmark; use Vercel if you want your iPad and laptop to see the same data.
 
-- One shared passphrase = one shared workspace. Anyone holding it can read **and write** everything. Share it like a house key, rotate it by changing the env var (everyone re-enters it).
-- Traffic is HTTPS; the passphrase is checked server-side with a constant-time compare; data lives in your Upstash Redis.
-- This is friends-and-family security, not per-user accounts with audit trails. For this app's purpose that's a reasonable trade — but don't put anything in it you couldn't stand a friend seeing.
-- Sync is last-write-wins per save with 25s polling: fine for a handful of people, not built for two people editing the same profile in the same second.
+## Security model
+
+- One shared passphrase = one shared workspace. Anyone holding it can read **and write** everything. Share it like a house key; rotate by changing the env var and redeploying (everyone re-enters it).
+- Traffic is HTTPS; the passphrase is compared server-side in constant time; data lives in your own Upstash Redis instance.
+- This is friends-and-family security — not per-user accounts with audit trails. Don't put anything in it you couldn't stand a friend seeing.
+- Sync is last-write-wins per save with 25-second polling. Fine for a handful of people; not built for two people editing the same profile in the same second.
+- The repo being public exposes **code only** — never your contacts. Keep `hearth-backup-*.json` files out of git.
 
 ## Local development
 
 ```sh
 npm install
-npm run build        # rebuild hearth*.html from src/
-node dev-server.mjs  # http://127.0.0.1:8787, passphrase "test-pass"
-npm run test:sync    # end-to-end two-device sync test
+npm run build             # rebuild hearth*.html from src/
+node dev-server.mjs       # http://127.0.0.1:8787, passphrase "test-pass"
+npm test                  # full suite
 ```

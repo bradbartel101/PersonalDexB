@@ -1,5 +1,5 @@
 // End-to-end test of the cloud-sync stack: dev server + two browser contexts
-// (two "devices") + a simulated extension POST. Run: node synctest.mjs
+// (two "devices"), covering data, categories, and the push digest.
 import { chromium } from "playwright-core";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
@@ -108,36 +108,30 @@ await t("edit on A appears on B via polling", async () => {
   if (rows !== 1) throw new Error("B rows: " + rows);
 });
 
-await t("extension POST → review button appears → import lands with photo", async () => {
-  const photo = await A.evaluate(() => {
-    const cv = document.createElement("canvas"); cv.width = 30; cv.height = 30;
-    cv.getContext("2d").fillStyle = "#2a6"; cv.getContext("2d").fillRect(0, 0, 30, 30);
-    return cv.toDataURL("image/jpeg");
-  });
-  const r = await fetch(BASE + "/api/captures", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: "Bearer " + PASS },
-    body: JSON.stringify({ people: [{ name: "Riley Cloud", headline: "CTO at Nimbus", location: "Chicago", photo, linkedin: "https://www.linkedin.com/in/rileycloud" }] }),
-  });
-  if (!r.ok) throw new Error("POST " + r.status);
-  await B.waitForSelector(".cap-alert", { timeout: 6000 });
-  await B.locator(".cap-alert").click();
-  await B.waitForSelector(".li-item");
-  await B.locator(".modal-actions .btn.primary").click();
-  await B.waitForTimeout(1800);
-  const riley = await B.evaluate(() =>
-    JSON.parse(localStorage.getItem("hearth-crm-v1")).contacts.find((c) => c.name === "Riley Cloud"));
-  if (!riley || !riley.photo || riley.role !== "CTO" || riley.company !== "Nimbus") throw new Error("riley: " + JSON.stringify(riley || {}).slice(0, 120));
-  const q = await fetch(BASE + "/api/captures", { headers: { Authorization: "Bearer " + PASS } }).then((x) => x.json());
-  if (q.people.length !== 0) throw new Error("queue not cleared: " + q.people.length);
+await t("categories and rules sync between devices", async () => {
+  await A.locator(".rail-tool", { hasText: "Categories" }).click();
+  await A.waitForSelector(".cat-row");
+  await A.locator(".rem-add input[name=\"newcat\"]").fill("Book Club");
+  await A.locator('.modal .rem-add button[type="submit"]').click();
+  await A.waitForTimeout(1800);
+  await A.locator(".modal-actions .btn.primary", { hasText: "Done" }).click();
+  await B.waitForTimeout(2500);
+  const groups = await B.evaluate(() => JSON.parse(localStorage.getItem("hearth-crm-v1")).groups.map((g) => g.name));
+  if (!groups.includes("Book Club")) throw new Error("B never saw the category: " + groups.join(","));
 });
 
-await t("import on B syncs back to A", async () => {
+await t("a person added on B syncs back to A", async () => {
+  await B.locator(".nav-btn", { hasText: "People" }).click();
+  await B.waitForSelector(".quickadd input");
+  await B.fill(".quickadd input", "Riley Novak");
+  await B.locator(".quickadd input").press("Enter");
+  await B.waitForSelector(".name-input");
+  await B.waitForTimeout(1800);
   await A.waitForTimeout(2500); // poll
   await A.locator(".nav-btn", { hasText: "People" }).click();
   await A.waitForSelector(".searchbox input");
   await A.fill(".searchbox input", "Riley");
-  await A.waitForTimeout(300);
+  await A.waitForTimeout(400);
   const rows = await A.locator(".person-row").count();
   if (rows !== 1) throw new Error("A rows: " + rows);
 });

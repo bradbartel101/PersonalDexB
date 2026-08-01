@@ -36,19 +36,19 @@ await t("star toggle + starred filter", async () => {
   const starred = await page.locator(".icon-btn.star.on").count();
   if (starred !== 2) throw new Error("expected 2 pre-starred, got " + starred);
   await page.locator(".person-row", { hasText: "Sam Torres" }).locator(".icon-btn.star").click();
-  await page.selectOption(".toolbar select >> nth=3", "starred");
+  await page.selectOption('select[aria-label="Show"]', "starred");
   await page.waitForTimeout(150);
   const rows = await page.locator(".person-row").count();
   if (rows !== 3) throw new Error("starred filter rows: " + rows);
-  await page.selectOption(".toolbar select >> nth=3", "active");
+  await page.selectOption('select[aria-label="Show"]', "active");
 });
 
 await t("sort by most overdue", async () => {
-  await page.selectOption(".toolbar select >> nth=4", "overdue");
+  await page.selectOption('select[aria-label="Sort"]', "overdue");
   await page.waitForTimeout(150);
   const first = await page.locator(".person-name").first().textContent();
   if (first !== "Dana Whitfield") throw new Error("first: " + first);
-  await page.selectOption(".toolbar select >> nth=4", "name");
+  await page.selectOption('select[aria-label="Sort"]', "name");
 });
 
 await t("bulk: tag two people", async () => {
@@ -70,16 +70,16 @@ await t("bulk: archive hides from active + Today", async () => {
   await page.waitForTimeout(200);
   if (await page.locator(".person-row", { hasText: "Chris Palmer" }).count())
     throw new Error("still visible in active");
-  await page.selectOption(".toolbar select >> nth=3", "archived");
+  await page.selectOption('select[aria-label="Show"]', "archived");
   await page.waitForTimeout(150);
   if (!(await page.locator(".person-row", { hasText: "Chris Palmer" }).count()))
     throw new Error("not in archived");
-  await page.selectOption(".toolbar select >> nth=3", "active");
+  await page.selectOption('select[aria-label="Show"]', "active");
   await page.locator(".toolbar .btn", { hasText: "Done" }).click();
 });
 
 await t("unarchive from profile", async () => {
-  await page.selectOption(".toolbar select >> nth=3", "archived");
+  await page.selectOption('select[aria-label="Show"]', "archived");
   await page.waitForTimeout(150);
   await page.locator(".person-name", { hasText: "Chris Palmer" }).click();
   await page.waitForSelector(".profile-archived");
@@ -137,7 +137,7 @@ await t("merge duplicates", async () => {
   if (after !== before - 1) throw new Error(`contacts ${before} -> ${after}`);
   const maya = await page.evaluate(() =>
     JSON.parse(localStorage.getItem("hearth-crm-v1")).contacts.find((c) => c.name === "Maya Chen"));
-  if (maya.interactions.length !== 2 || !maya.email) throw new Error("merge lost data");
+  if (maya.interactions.length !== 2 || !maya.emails.length) throw new Error("merge lost data");
   await page.locator(".modal-actions .btn", { hasText: "Close" }).click();
 });
 
