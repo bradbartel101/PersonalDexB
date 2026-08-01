@@ -78,6 +78,14 @@ const openPerson = async (name) => {
 
 await page.goto(BASE + "/?pollms=1500");
 await page.waitForTimeout(600);
+/* The app now starts empty by design; these tests exercise the populated
+   state, so opt into the sample data first. */
+const ensureSample = async (pg) => {
+  const btn = pg.locator(".start-foot .btn", { hasText: "Load sample" });
+  if (await btn.count()) { await btn.click(); await pg.waitForTimeout(900); }
+};
+await ensureSample(page);
+
 await page.fill(".sync-pass", PASS);
 await page.locator(".rail-sync .btn.primary").click();
 await page.waitForSelector(".sync-line.ok", { timeout: 6000 });

@@ -250,3 +250,50 @@ export function responsePatterns(contact) {
     initiationRatio: inbound + outbound ? outbound / (inbound + outbound) : null,
   };
 }
+
+/* ---------- referral graph ----------
+   Reads "referred by Sam" / "intro'd by Priya" out of the how-we-met line and
+   links it to a real contact. Tolerates trailing context ("intro'd by Priya at
+   the brunch") and first-name-only references when they're unambiguous. */
+
+const REFERRAL_RE = /\b(?:referred|introduced|intro'?d|recommended|sent|connected)\s+(?:by|through|via)\s+([A-Za-zÀ-ÿ'’.\- ]{2,60})/i;
+const REF_STOP = /\s+(?:at|in|on|from|during|for|through|via|after|before|while|when|who|last|this)\s.*$/i;
+
+export function findByNameFragment(contacts, fragment) {
+  const f = String(fragment || "").trim().toLowerCase().replace(/\s+/g, " ");
+  if (!f) return null;
+  const norm = (c) => String(c.name || "").trim().toLowerCase().replace(/\s+/g, " ");
+  const exact = contacts.filter((c) => norm(c) === f);
+  if (exact.length === 1) return exact[0];
+  const starts = contacts.filter((c) => norm(c).startsWith(f + " "));
+  return starts.length === 1 ? starts[0] : null;
+}
+
+export function referralLinks(contacts) {
+  const list = contacts || [];
+  const links = [];
+  for (const c of list) {
+    const m = String(c.context || "").match(REFERRAL_RE);
+    if (!m) continue;
+    let phrase = m[1].replace(REF_STOP, "").replace(/[.,;].*$/, "").trim();
+    if (!phrase) continue;
+    const words = phrase.split(/\s+/).slice(0, 4);
+    let source = null;
+    for (let n = words.length; n >= 1 && !source; n--) {
+      const cand = findByNameFragment(list, words.slice(0, n).join(" "));
+      if (cand && cand.id !== c.id) source = cand;
+    }
+    if (source) links.push({ from: source, to: c });
+  }
+  return links;
+}
+
+/* Grouped for display: each connector with the people they introduced. */
+export function referralGroups(contacts) {
+  const m = new Map();
+  for (const l of referralLinks(contacts)) {
+    if (!m.has(l.from.id)) m.set(l.from.id, { person: l.from, intros: [] });
+    m.get(l.from.id).intros.push(l.to);
+  }
+  return [...m.values()].sort((a, b) => b.intros.length - a.intros.length);
+}

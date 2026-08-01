@@ -7,8 +7,10 @@ import {
   GROUP_COLORS, DEFAULT_GROUPS, DEFAULT_RULES, suggestFromRules, ruleMatches,
   groupName, normalizeGroups, colorOf, customDays, UNIT_DAYS, applyAiFilter,
 } from "./due.js";
-import { responsePatterns } from "./match.js";
+import { responsePatterns, referralGroups } from "./match.js";
 import { parseQuickCapture } from "./parse.js";
+import { clusterContacts, resolvePlace, project } from "./geo.js";
+import { WORLD_PATH, WORLD_W, WORLD_H } from "./world.js";
 
 /* ============================== constants ============================== */
 
@@ -48,6 +50,9 @@ const PATHS = {
   tag: <><path d="M3.5 11V4.5a1 1 0 0 1 1-1H11l9 9-7.5 7.5-9-9z" /><circle cx="7.5" cy="7.5" r="1.3" /></>,
   chart: <><path d="M4 20V4M4 20h16" /><rect x="7.5" y="12" width="3" height="5" rx="1" /><rect x="12.5" y="8" width="3" height="9" rx="1" /><rect x="17" y="5" width="3" height="12" rx="1" /></>,
   bolt: <path d="M13 3 5.5 13.5H11l-1 7.5 8-11H12l1-7z" />,
+  network: <><circle cx="6" cy="18" r="2.6" /><circle cx="18" cy="18" r="2.6" /><circle cx="12" cy="5" r="2.6" /><path d="M10.7 7.2 7.3 15.6M13.3 7.2l3.4 8.4M8.6 18h6.8" /></>,
+  globe: <><circle cx="12" cy="12" r="8.5" /><path d="M3.5 12h17M12 3.5c2.4 2.6 2.4 14.4 0 17M12 3.5c-2.4 2.6-2.4 14.4 0 17" /></>,
+  tree: <><rect x="9.5" y="3" width="5" height="4" rx="1" /><rect x="3" y="17" width="5" height="4" rx="1" /><rect x="16" y="17" width="5" height="4" rx="1" /><path d="M12 7v5M5.5 17v-2.5h13V17" /></>,
   wand: <path d="M4 20 16.5 7.5M14.5 5.5 18.5 9.5M17 3.5v3M20.5 5H21M6.5 4v2.5M5.5 5.2H8M19 15v2M18 16h2" />,
 };
 
@@ -241,6 +246,17 @@ function seedData() {
   };
 }
 
+/* A brand-new install starts genuinely empty — no invented people. */
+function emptyData() {
+  return {
+    v: 2,
+    groups: DEFAULT_GROUPS.map((g) => ({ ...g })),
+    rules: DEFAULT_RULES.map((r) => ({ ...r })),
+    prefs: { view: "list" },
+    contacts: [],
+  };
+}
+
 function blankContact(name) {
   return {
     id: uid(), name: name.trim(), context: "", emails: [], phones: [], company: "",
@@ -413,7 +429,7 @@ function greeting() {
   return "Good evening";
 }
 
-function TodayView({ contacts, groups, openProfile, logInteraction, snooze, completeReminder, acceptSuggest, dismissSuggest, openPeople, sync }) {
+function TodayView({ contacts, groups, openProfile, logInteraction, snooze, completeReminder, acceptSuggest, dismissSuggest, openPeople, sync, onQuickAdd, onCapture, onImport, onSample, checklist }) {
   const [logging, setLogging] = useState(null);
   const today = todayMid();
 
@@ -495,6 +511,57 @@ function TodayView({ contacts, groups, openProfile, logInteraction, snooze, comp
 
   const dateStr = today.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
 
+  if (contacts.length === 0) {
+    return (
+      <div className="page">
+        <header className="page-head">
+          <div className="page-date">{dateStr}</div>
+          <h1 className="page-title display">Let's get your people in here.</h1>
+          <p className="page-sub">
+            Hearth is empty — that's on purpose. Nothing here is invented; everything you see from
+            now on is yours.
+          </p>
+        </header>
+
+        <div className="card start-card">
+          <h2 className="start-title">Three ways to start</h2>
+          <div className="start-grid">
+            <button className="start-tile" onClick={onQuickAdd}>
+              <Icon n="plus" size={20} />
+              <b>Add someone</b>
+              <span>Type a name. Fill in the rest whenever you feel like it.</span>
+            </button>
+            <button className="start-tile" onClick={onCapture}>
+              <Icon n="bolt" size={20} />
+              <b>Quick capture</b>
+              <span>Paste “met Jane, VP Eng at Acme, referred by Sam” and confirm.</span>
+            </button>
+            <button className="start-tile" onClick={onImport}>
+              <Icon n="upload" size={20} />
+              <b>Import LinkedIn</b>
+              <span>Bring in your whole network from LinkedIn's official export.</span>
+            </button>
+          </div>
+          <div className="start-foot">
+            <span>Just looking around?</span>
+            <button className="btn sm" onClick={onSample}>Load sample data</button>
+            <span className="ai-note">You can clear it in one click later.</span>
+          </div>
+        </div>
+
+        <div className="card start-how">
+          <h3 className="pcard-title">How Hearth works</h3>
+          <ol className="li-steps">
+            <li>Add the people you actually want to keep up with.</li>
+            <li>Give the ones who matter a <b>cadence</b> — weekly, monthly, quarterly.</li>
+            <li>Open this page. Anyone you've drifted past their cadence appears at the top.</li>
+            <li>Hit <b>Log</b> when you talk to them. The clock resets. That's the whole loop.</li>
+          </ol>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="page">
       <header className="page-head">
@@ -517,6 +584,22 @@ function TodayView({ contacts, groups, openProfile, logInteraction, snooze, comp
           </span>
         </p>
       </header>
+
+      {checklist && checklist.items.some((i) => !i.done) && (
+        <div className="card checklist">
+          <div className="checklist-head">
+            <b>Getting started</b>
+            <span>{checklist.items.filter((i) => i.done).length} of {checklist.items.length} done</span>
+          </div>
+          {checklist.items.map((it) => (
+            <button key={it.label} className={"check-row" + (it.done ? " done" : "")}
+              onClick={it.done ? undefined : it.action} disabled={it.done}>
+              <span className="check-box">{it.done ? "✓" : ""}</span>
+              <span>{it.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
 
       {sync && sync.show && (
         <div className="sync-strip">
@@ -1774,6 +1857,200 @@ function InsightsView({ contacts, groups, openProfile }) {
   );
 }
 
+/* ---------------- Network: map, group tree, related ---------------- */
+
+function WorldMap({ contacts, selected, onSelect }) {
+  const [zoom, setZoom] = useState(1);
+  const cell = zoom >= 4 ? 2 : zoom >= 2 ? 6 : 12;
+  const { clusters, unlocated, locatedCount } = useMemo(
+    () => clusterContacts(contacts, cell), [contacts, cell]);
+
+  const maxCount = Math.max(1, ...clusters.map((c) => c.count));
+  const radius = (n) => 11 + Math.round((Math.sqrt(n) / Math.sqrt(maxCount)) * 17);
+
+  // Keep the selected cluster centred when zoomed in.
+  const focus = selected && selected.lat != null ? selected : null;
+  const vw = WORLD_W / zoom, vh = WORLD_H / zoom;
+  const c = focus ? project(focus.lat, focus.lon, WORLD_W, WORLD_H) : { x: WORLD_W / 2, y: WORLD_H / 2 };
+  const vx = Math.max(0, Math.min(WORLD_W - vw, c.x - vw / 2));
+  const vy = Math.max(0, Math.min(WORLD_H - vh, c.y - vh / 2));
+
+  return (
+    <div className="map-wrap">
+      <svg className="map" viewBox={`${vx} ${vy} ${vw} ${vh}`} role="img"
+        aria-label={locatedCount + " contacts placed on a world map"}>
+        <rect x="0" y="0" width={WORLD_W} height={WORLD_H} className="map-sea" />
+        <g className="map-grat">
+          {[-60, -30, 0, 30, 60].map((lat) => {
+            const y = project(lat, 0, WORLD_W, WORLD_H).y;
+            return <line key={"h" + lat} x1="0" y1={y} x2={WORLD_W} y2={y} />;
+          })}
+          {[-120, -60, 0, 60, 120].map((lon) => {
+            const x = project(0, lon, WORLD_W, WORLD_H).x;
+            return <line key={"v" + lon} x1={x} y1="0" x2={x} y2={WORLD_H} />;
+          })}
+        </g>
+        <path d={WORLD_PATH} className="map-land" />
+        {clusters.map((cl, i) => {
+          const p = project(cl.lat, cl.lon, WORLD_W, WORLD_H);
+          const r = radius(cl.count) / zoom;
+          const on = selected && selected.key === cl.label + cl.count;
+          return (
+            <g key={i} className={"map-pin" + (on ? " on" : "")} transform={`translate(${p.x} ${p.y})`}
+              onClick={() => onSelect(on ? null : { ...cl, key: cl.label + cl.count })}>
+              <circle r={r * 1.5} className="map-halo" />
+              <circle r={r} className="map-bubble" />
+              <text className="map-count" style={{ fontSize: (r * 0.9) + "px" }} dy={r * 0.32}>{cl.count}</text>
+            </g>
+          );
+        })}
+      </svg>
+      <div className="map-zoom">
+        <button className="icon-btn" aria-label="Zoom in" onClick={() => setZoom((z) => Math.min(8, z * 2))}>+</button>
+        <button className="icon-btn" aria-label="Zoom out" onClick={() => { setZoom((z) => Math.max(1, z / 2)); onSelect(null); }}>−</button>
+      </div>
+      {unlocated.length > 0 && (
+        <div className="map-foot">
+          {unlocated.length} {unlocated.length === 1 ? "person has" : "people have"} no recognizable location —
+          add a city to their profile to place them.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function GroupTree({ contacts, groups, openProfile }) {
+  const [open, setOpen] = useState(() => new Set(groups.slice(0, 3).map((g) => g.name)));
+  const toggle = (name) => setOpen((s) => {
+    const n = new Set(s);
+    if (n.has(name)) n.delete(name); else n.add(name);
+    return n;
+  });
+  const rows = groups.map((g) => ({
+    ...g, people: contacts.filter((c) => (c.groups || []).includes(g.name)),
+  }));
+  const none = contacts.filter((c) => (c.groups || []).length === 0);
+  if (none.length) rows.push({ name: "Uncategorized", color: null, people: none });
+
+  return (
+    <div className="tree">
+      {rows.map((g) => (
+        <div className="tree-branch" key={g.name}>
+          <button className="tree-node" onClick={() => toggle(g.name)} aria-expanded={open.has(g.name)}>
+            <span className={"tree-caret" + (open.has(g.name) ? " open" : "")}>▸</span>
+            <span className={"chip" + (g.color != null ? " gc-" + g.color : "")}>{g.name}</span>
+            <span className="tree-count">{g.people.length}</span>
+          </button>
+          {open.has(g.name) && (
+            <div className="tree-kids">
+              {g.people.length === 0 && <div className="tree-empty">Nobody filed here yet.</div>}
+              {g.people.map((c) => (
+                <button className="tree-leaf" key={c.id} onClick={() => openProfile(c.id)}>
+                  <Avatar c={c} size={24} />
+                  <span className="tree-leaf-name">{c.name}</span>
+                  <span className="tree-leaf-sub">{[c.role, c.company].filter(Boolean).join(" · ")}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function RelatedView({ contacts, openProfile }) {
+  const grouped = useMemo(() => referralGroups(contacts), [contacts]);
+
+  if (!grouped.length) {
+    return (
+      <div className="card empty">
+        <Icon n="network" size={28} />
+        <div className="display">No connections mapped yet</div>
+        <p>
+          Write “referred by Sam” or “introduced by Priya” in someone's <b>how we met</b> line and
+          Hearth will draw the link — showing who your best connectors are.
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div className="card row-list">
+      {grouped.map(({ person, intros }) => (
+        <div className="rel-row" key={person.id}>
+          <button className="rel-source" onClick={() => openProfile(person.id)}>
+            <Avatar c={person} size={38} />
+            <span>
+              <b>{person.name}</b>
+              <span className="rel-sub">introduced {intros.length} {intros.length === 1 ? "person" : "people"}</span>
+            </span>
+          </button>
+          <div className="rel-kids">
+            {intros.map((p) => (
+              <button className="uncat-chip" key={p.id} onClick={() => openProfile(p.id)}>
+                <Avatar c={p} size={20} />{p.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function NetworkView({ contacts, groups, openProfile }) {
+  const [tab, setTab] = useState("map");
+  const [selected, setSelected] = useState(null);
+  const active = useMemo(() => contacts.filter((c) => !c.archived), [contacts]);
+  const listed = selected ? selected.people : active;
+
+  return (
+    <div className="page wide">
+      <header className="page-head">
+        <h1 className="page-title display">Network</h1>
+        <p className="page-sub">{active.length} people · where they are, how they're grouped, who connected you</p>
+      </header>
+
+      <div className="tabs">
+        {[["map", "Map", "globe"], ["tree", "Group tree", "tree"], ["related", "Related contacts", "network"]].map(([id, label, icon]) => (
+          <button key={id} className={"tab" + (tab === id ? " on" : "")} onClick={() => { setTab(id); setSelected(null); }}>
+            <Icon n={icon} size={15} />{label}
+          </button>
+        ))}
+      </div>
+
+      {tab === "map" && (
+        <div className="net-split">
+          <WorldMap contacts={active} selected={selected} onSelect={setSelected} />
+          <div className="net-side card">
+            <div className="net-side-head">
+              <b>{listed.length} {listed.length === 1 ? "contact" : "contacts"}</b>
+              {selected && (
+                <button className="btn ghost sm" onClick={() => setSelected(null)}>
+                  {selected.label} · clear
+                </button>
+              )}
+            </div>
+            <div className="net-list">
+              {listed.length === 0 && <div className="tree-empty">Nobody here yet.</div>}
+              {listed.slice(0, 200).map((c) => (
+                <button className="net-item" key={c.id} onClick={() => openProfile(c.id)}>
+                  <Avatar c={c} size={28} />
+                  <span className="net-item-name">{c.name}</span>
+                  <span className="net-item-sub">{c.role || c.company || c.location || "—"}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {tab === "tree" && <GroupTree contacts={active} groups={groups} openProfile={openProfile} />}
+      {tab === "related" && <RelatedView contacts={active} openProfile={openProfile} />}
+    </div>
+  );
+}
+
 /* ============================== import / export ============================== */
 
 function parseCSV(text) {
@@ -2222,7 +2499,7 @@ function App() {
       setMode(storageMode);
       let parsed = null;
       if (raw) { try { parsed = normalizeData(JSON.parse(raw)); } catch (e) { /* corrupted — reseed */ } }
-      const boot = parsed || seedData();
+      const boot = parsed || emptyData();
       setData(boot);
       let pass = null;
       try { pass = localStorage.getItem(PASS_KEY); } catch (e) { /* unavailable */ }
@@ -2677,6 +2954,38 @@ function App() {
       + (review.items.length - chosen.length ? " · " + (review.items.length - chosen.length) + " skipped" : ""));
   };
 
+  const loadSample = useCallback(() => {
+    const seed = seedData();
+    setData((d) => ({
+      ...d,
+      groups: normalizeGroups([...(d.groups || []), ...seed.groups]),
+      rules: (d.rules && d.rules.length) ? d.rules : seed.rules,
+      contacts: [...d.contacts, ...seed.contacts],
+    }));
+    toast("Sample data loaded — clear it any time from the sidebar");
+  }, [toast]);
+
+  const checklist = useMemo(() => {
+    if (!data || contacts.length === 0) return null;
+    const items = [
+      { label: "Add your first person", done: contacts.length > 0,
+        action: () => setRoute({ name: "people", focus: { target: "add", t: Date.now() } }) },
+      { label: "Set a keep-in-touch cadence for someone",
+        done: contacts.some((c) => cadenceDays(c)),
+        action: () => setRoute({ name: "people" }) },
+      { label: "Log an interaction", done: contacts.some((c) => (c.interactions || []).length),
+        action: () => setRoute({ name: "people" }) },
+      { label: "File someone into a category",
+        done: contacts.some((c) => (c.groups || []).length),
+        action: () => setRoute({ name: "network" }) },
+      { label: "Import your LinkedIn connections",
+        done: contacts.some((c) => c.linkedin),
+        action: () => { setReview(null); setLiOpen(true); } },
+    ];
+    // Once everything's done the panel disappears for good.
+    return { items };
+  }, [data, contacts]);
+
   const sampleCount = contacts.filter((c) => c.sample).length;
   const clearSample = () => {
     setData((d) => ({ ...d, contacts: d.contacts.filter((c) => !c.sample) }));
@@ -2721,6 +3030,10 @@ function App() {
           <button className={"nav-btn" + (route.name === "history" ? " on" : "")}
             onClick={() => setRoute({ name: "history" })}>
             <Icon n="history" size={17} />History
+          </button>
+          <button className={"nav-btn" + (route.name === "network" ? " on" : "")}
+            onClick={() => setRoute({ name: "network" })}>
+            <Icon n="network" size={17} />Network
           </button>
           <button className={"nav-btn" + (route.name === "insights" ? " on" : "")}
             onClick={() => setRoute({ name: "insights" })}>
@@ -2821,6 +3134,11 @@ function App() {
             logInteraction={logInteraction} snooze={snooze} completeReminder={completeReminder}
             acceptSuggest={acceptSuggest} dismissSuggest={dismissSuggest}
             openPeople={(show) => setRoute({ name: "people", show })}
+            onQuickAdd={() => setRoute({ name: "people", focus: { target: "add", t: Date.now() } })}
+            onCapture={() => { setQcOpen(true); setQcDraft(null); }}
+            onImport={() => { setReview(null); setLiOpen(true); }}
+            onSample={loadSample}
+            checklist={checklist}
             sync={HTTP && integ && !integ.unavailable ? {
               show: true,
               connected: !!(integ.google && integ.google.connected),
@@ -2839,6 +3157,10 @@ function App() {
             addContact={addContact} focusSignal={route.focus} initialShow={route.show}
             toggleStar={toggleStar} bulkApply={bulkApply}
             aiReady={aiReady} aiCall={aiCall} toast={toast} />
+        )}
+        {route.name === "network" && (
+          <NetworkView contacts={contacts} groups={data.groups}
+            openProfile={(id) => setRoute({ name: "profile", id, from: "network" })} />
         )}
         {route.name === "insights" && (
           <InsightsView contacts={contacts} groups={data.groups}

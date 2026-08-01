@@ -60,9 +60,15 @@ const connect = async (page, pass) => {
   await page.locator(".rail-sync .btn.primary").click();
 };
 
+
+const ensureSample = async (pg) => {
+  const btn = pg.locator(".start-foot .btn", { hasText: "Load sample" });
+  if (await btn.count()) { await btn.click(); await pg.waitForTimeout(900); }
+};
 const A = await newPage();
 await A.goto(BASE + "/?pollms=1000");
 await A.waitForTimeout(600);
+await ensureSample(A);
 
 await t("device A: prompts for passphrase", async () => {
   await A.waitForSelector(".sync-pass", { timeout: 4000 });

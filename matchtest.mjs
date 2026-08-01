@@ -4,6 +4,7 @@ import {
   normEmail, parseAddress, isNoReply, isConsumerDomain, buildIndex, matchAddress,
   isSelf, messagesToInteractions, eventsToInteractions, cleanSubject, toDay,
   dedupeAgainstExisting, responsePatterns,
+  referralLinks, referralGroups, findByNameFragment,
 } from "./src/match.js";
 
 let pass = 0, fail = 0;
@@ -268,6 +269,57 @@ t("response patterns tolerate no direction data", () => {
   const r = responsePatterns({ interactions: [{ date: "2026-01-01", type: "call" }] });
   eq(r.logged, 0);
   eq(r.medianReplyDays, null);
+});
+
+/* ---------- referral graph ---------- */
+
+const PEOPLE = [
+  { id: "a", name: "Priya Sharma", context: "Former teammate" },
+  { id: "b", name: "James Okafor", context: "Intro'd by Priya at Founders Brunch '24" },
+  { id: "c", name: "Sam Torres", context: "Climbing gym" },
+  { id: "d", name: "Jane Fitz", context: "Referred by Sam Torres" },
+  { id: "e", name: "Nia Blake", context: "introduced by Priya Sharma last spring" },
+  { id: "f", name: "Solo Person", context: "Met at a conference" },
+  { id: "g", name: "Ghost Ref", context: "referred by Someone Unknown" },
+];
+
+t("links a full-name referral", () => {
+  const l = referralLinks(PEOPLE);
+  ok(l.some((x) => x.from.id === "c" && x.to.id === "d"), "Sam -> Jane missing");
+});
+
+t("links a first-name-only referral with trailing context", () => {
+  const l = referralLinks(PEOPLE);
+  ok(l.some((x) => x.from.id === "a" && x.to.id === "b"), "Priya -> James missing");
+});
+
+t("handles 'introduced by X last spring'", () => {
+  ok(referralLinks(PEOPLE).some((x) => x.from.id === "a" && x.to.id === "e"), "Priya -> Nia missing");
+});
+
+t("ignores unmatched or absent referrers", () => {
+  const l = referralLinks(PEOPLE);
+  ok(!l.some((x) => x.to.id === "f"), "linked a non-referral");
+  ok(!l.some((x) => x.to.id === "g"), "linked an unknown referrer");
+});
+
+t("groups connectors by how many they introduced", () => {
+  const g = referralGroups(PEOPLE);
+  eq(g[0].person.id, "a");
+  eq(g[0].intros.length, 2);
+});
+
+t("ambiguous first names are not guessed", () => {
+  const dupes = [
+    { id: "1", name: "Sam Torres" }, { id: "2", name: "Sam Rivera" },
+    { id: "3", name: "New Person", context: "referred by Sam" },
+  ];
+  eq(referralLinks(dupes).length, 0, "should refuse to pick between two Sams");
+  eq(findByNameFragment(dupes, "Sam"), null);
+});
+
+t("never links a person to themselves", () => {
+  eq(referralLinks([{ id: "x", name: "Ada Lovelace", context: "referred by Ada Lovelace" }]).length, 0);
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

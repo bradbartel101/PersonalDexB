@@ -10,6 +10,14 @@ page.on("console", (m) => { if (m.type() === "error") errors.push("console: " + 
 // Simulate the artifact wrapper: file lacks <html>/<body>; browsers handle that fine.
 await page.goto("file://" + path.resolve(process.argv[2] || "hearth.html"));
 await page.waitForTimeout(600);
+/* The app now starts empty by design; these tests exercise the populated
+   state, so opt into the sample data first. */
+const ensureSample = async (pg) => {
+  const btn = pg.locator(".start-foot .btn", { hasText: "Load sample" });
+  if (await btn.count()) { await btn.click(); await pg.waitForTimeout(900); }
+};
+await ensureSample(page);
+
 
 const t = async (name, fn) => {
   try { await fn(); console.log("ok  ", name); }

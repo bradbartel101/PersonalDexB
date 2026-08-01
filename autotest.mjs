@@ -11,6 +11,14 @@ page.on("pageerror", (e) => errors.push("pageerror: " + e.message));
 page.on("console", (m) => { if (m.type() === "error") errors.push("console: " + m.text()); });
 await page.goto("file://" + path.resolve("hearth-standalone.html"));
 await page.waitForTimeout(600);
+/* The app now starts empty by design; these tests exercise the populated
+   state, so opt into the sample data first. */
+const ensureSample = async (pg) => {
+  const btn = pg.locator(".start-foot .btn", { hasText: "Load sample" });
+  if (await btn.count()) { await btn.click(); await pg.waitForTimeout(900); }
+};
+await ensureSample(page);
+
 
 const t = async (name, fn) => {
   try { await fn(); console.log("ok  ", name); }
@@ -45,6 +53,7 @@ await t("dismissing a suggestion persists across reload", async () => {
   await page.evaluate(() => localStorage.removeItem("hearth-crm-v1"));
   await page.reload();
   await page.waitForTimeout(700);
+  await ensureSample(page);
   const row = page.locator(".section", { hasText: "Noticed" }).locator(".person-row", { hasText: "Chris Palmer" });
   await row.locator(".btn.ghost", { hasText: "No thanks" }).click();
   await page.waitForTimeout(700);
@@ -61,6 +70,7 @@ await t("profile shows suggestion chip for no-cadence contact", async () => {
   await page.evaluate(() => localStorage.removeItem("hearth-crm-v1"));
   await page.reload();
   await page.waitForTimeout(700);
+  await ensureSample(page);
   await page.locator(".nav-btn", { hasText: "People" }).click();
   await page.fill(".searchbox input", "Chris Palmer");
   await page.waitForTimeout(200);

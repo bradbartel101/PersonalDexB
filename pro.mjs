@@ -7,6 +7,14 @@ page.on("pageerror", (e) => errors.push("pageerror: " + e.message));
 page.on("console", (m) => { if (m.type() === "error") errors.push("console: " + m.text()); });
 await page.goto("file://" + path.resolve(process.argv[2] || "hearth-standalone.html"));
 await page.waitForTimeout(700);
+/* The app now starts empty by design; these tests exercise the populated
+   state, so opt into the sample data first. */
+const ensureSample = async (pg) => {
+  const btn = pg.locator(".start-foot .btn", { hasText: "Load sample" });
+  if (await btn.count()) { await btn.click(); await pg.waitForTimeout(900); }
+};
+await ensureSample(page);
+
 const t = async (name, fn) => {
   try { await fn(); console.log("ok  ", name); }
   catch (e) { console.log("FAIL", name, "—", e.message.split("\n")[0]); }

@@ -40,6 +40,10 @@ HEARTH_PASSPHRASE="my long phrase" node dev-server.mjs 9000
 
 ---
 
+## First run
+
+Hearth opens **empty**. No invented contacts, no fake dashboard — just three ways in (add someone, quick capture, import LinkedIn) and a short explanation of how the loop works. A getting-started checklist appears once you have your first person and disappears for good when you've done all five steps. Sample data is opt-in from the empty screen and clearable in one click.
+
 ## The daily loop
 
 Open the app → **Today** lists who's overdue, most overdue first → hit **Log**, pick a type, done. Logging resets that person's follow-up clock automatically.
@@ -79,6 +83,11 @@ The dashboard also shows:
 **Enrichment** — pronouns, timezone, preferred contact method, and a **Key facts** list (kids' names, what they're into, what you owe each other) surfaced near the top of every profile.
 
 **Quick capture** — paste `met Jane, VP Eng at Acme, referred by Sam` and confirm the parsed draft. Runs locally; no API needed.
+
+**Network** — three ways to see your circle:
+- *Map*: everyone plotted from their Location field on a real world map, clustered into bubbles you can click to filter, with zoom that re-clusters. Geocoding is a built-in gazetteer — no API, nothing leaves the page. People whose location isn't recognized are called out rather than silently dropped.
+- *Group tree*: every category as an expandable branch with the people filed under it, plus an Uncategorized branch.
+- *Related contacts*: who introduced whom, read out of the "how we met" line ("referred by Sam", "intro'd by Priya"), ranked by who your best connectors are.
 
 **Insights** — network by category, contacts added over 12 months, neglected relationships (rated 4–5 but overdue), how you keep in touch, and response patterns.
 
@@ -160,6 +169,8 @@ src/app.jsx          the entire UI
 src/due.js           pure cadence / date / rules / filter logic (shared with the API)
 src/match.js         pure email + calendar → person matching
 src/parse.js         pure quick-capture text parsing
+src/geo.js           offline place lookup + map clustering
+src/world.js         generated world outline (Natural Earth 110m, public domain)
 src/styles.css       design tokens + components (light and dark)
 build.mjs            esbuild bundle → hearth.html + hearth-standalone.html
 api/data.js          synced CRM document
@@ -171,6 +182,7 @@ api/push.js          push subscriptions
 api/notify.js        daily digest cron
 dev-server.mjs       runs the API + app locally
 scripts/site.mjs     assembles public/ for deployment
+scripts/world.mjs    regenerates src/world.js from world-atlas
 ```
 
 ## Tests
@@ -193,3 +205,5 @@ npm run test:sync     # two-device sync + push digest (starts a real server)
 | `parsetest.mjs` | Quick-capture parsing |
 | `gsynctest.mjs` | Full Gmail/Calendar sync pipeline against a mock Google API |
 | `integtest.mjs` | Integrations panel, AI features (stubbed Anthropic), NL search, quick capture, merge |
+| `geotest.mjs` | Place resolution and map clustering |
+| `uxtest.mjs` | Empty-state onboarding, sample opt-in, Network map / tree / related |
