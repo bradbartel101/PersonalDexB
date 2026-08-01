@@ -7,6 +7,8 @@ import {
   GROUP_COLORS, DEFAULT_GROUPS, DEFAULT_RULES, suggestFromRules, ruleMatches,
   groupName, normalizeGroups, colorOf, customDays, UNIT_DAYS,
 } from "./due.js";
+import { responsePatterns } from "./match.js";
+import { parseQuickCapture } from "./parse.js";
 
 /* ============================== constants ============================== */
 
@@ -44,6 +46,8 @@ const PATHS = {
   merge: <path d="M7 4h4v4H7zM13 16h4v4h-4zM9 8v4a4 4 0 0 0 4 4M9 12h.01" />,
   calendar: <><rect x="3.5" y="5" width="17" height="15.5" rx="2.5" /><path d="M3.5 9.5h17M8 3v4M16 3v4" /></>,
   tag: <><path d="M3.5 11V4.5a1 1 0 0 1 1-1H11l9 9-7.5 7.5-9-9z" /><circle cx="7.5" cy="7.5" r="1.3" /></>,
+  chart: <><path d="M4 20V4M4 20h16" /><rect x="7.5" y="12" width="3" height="5" rx="1" /><rect x="12.5" y="8" width="3" height="9" rx="1" /><rect x="17" y="5" width="3" height="12" rx="1" /></>,
+  bolt: <path d="M13 3 5.5 13.5H11l-1 7.5 8-11H12l1-7z" />,
   wand: <path d="M4 20 16.5 7.5M14.5 5.5 18.5 9.5M17 3.5v3M20.5 5H21M6.5 4v2.5M5.5 5.2H8M19 15v2M18 16h2" />,
 };
 
@@ -130,6 +134,7 @@ function seedData() {
     custom: [], reminders: [], dates: [], interactions: [], cadence: { id: "none", days: null },
     snoozedUntil: null, starred: false, archived: false, strength: 0,
     lastContactedAt: "", linkedin: "", connectedOn: "",
+    timezone: "", pronouns: "", preferred: "", facts: [],
     createdAt: d(400), sample: true, ...o,
   });
   return {
@@ -144,6 +149,7 @@ function seedData() {
         birthday: bday(12, 31), tags: ["berkeley", "design", "hiking"], groups: ["Close Friends"],
         cadence: { id: "monthly" }, starred: true,
         custom: [{ id: uid(), label: "Instagram", value: "@mayadraws" }],
+        facts: ["Training for a half marathon", "Sightglass is her spot"], timezone: "PT", pronouns: "she/her",
         notes: "Thinking about leaving Figma to freelance. Loves Sightglass. Training for a half marathon in October.",
         interactions: [
           { id: uid(), type: "coffee", date: d(47), text: "Sightglass — she's serious about going freelance. I promised to send her my contract template." },
@@ -154,6 +160,7 @@ function seedData() {
         name: "Grandma June", strength: 5, context: "Mom's side — calls every Sunday if I don't first",
         phones: ["(555) 201-4477"], location: "Tucson, AZ", birthday: bday(25, 84),
         tags: ["family"], groups: ["Family"], cadence: { id: "weekly" }, starred: true,
+        facts: ["Tomatoes are her pride", "New hip, doing great"], timezone: "MT", preferred: "Call, never text",
         notes: "New hip doing great. Ask about the garden — the tomatoes are her pride this year.",
         interactions: [
           { id: uid(), type: "call", date: d(5), text: "Long call about the garden and cousin Pete's wedding plans." },
@@ -177,6 +184,7 @@ function seedData() {
         cadence: { id: "quarterly" },
         linkedin: "https://www.linkedin.com/in/jokafor", connectedOn: "14 Mar 2024",
         reminders: [{ id: uid(), date: f(15), text: "Send the Q3 update deck" }],
+        facts: ["Two kids", "Big Arsenal fan"], timezone: "ET", pronouns: "he/him",
         notes: "Writes $50–250k checks. Genuinely helpful with hiring intros. Two kids, big Arsenal fan.",
         interactions: [
           { id: uid(), type: "email", date: d(104), text: "Sent Q2 update; he replied with two candidate intros." },
@@ -240,6 +248,7 @@ function blankContact(name) {
     custom: [], reminders: [], dates: [], interactions: [], cadence: { id: "none", days: null },
     snoozedUntil: null, starred: false, archived: false, noSuggest: false,
     strength: 0, lastContactedAt: "", linkedin: "", connectedOn: "",
+    timezone: "", pronouns: "", preferred: "", facts: [],
     createdAt: iso(todayMid()), sample: false,
   };
 }
@@ -947,6 +956,9 @@ const CORE_FIELDS = [
   { k: "location", label: "Location", type: "text", ph: "City" },
   { k: "birthday", label: "Birthday", type: "text", ph: "YYYY-MM-DD or MM-DD" },
   { k: "linkedin", label: "LinkedIn", type: "text", ph: "linkedin.com/in/…" },
+  { k: "pronouns", label: "Pronouns", type: "text", ph: "they/them" },
+  { k: "timezone", label: "Timezone", type: "text", ph: "PT · UTC−8" },
+  { k: "preferred", label: "Preferred contact", type: "text", ph: "Text beats email" },
 ];
 
 /* Repeatable email / phone rows: always one blank row to type into. */
@@ -968,7 +980,7 @@ function MultiField({ label, values, onChange, type, ph, actionScheme }) {
             key={v + ":" + i}
             onBlur={(e) => { if (e.target.value.trim() !== v) commit(i, e.target.value); }}
             onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); }} />
-          {v && (
+          {v && actionScheme && (
             <a className="field-act" href={actionScheme + (actionScheme === "tel:" ? v.replace(/[^+\d]/g, "") : v)}
               title={actionScheme === "tel:" ? "Call" : "Compose email"}>
               <Icon n={actionScheme === "tel:" ? "phone" : "mail"} size={12} />
@@ -1095,6 +1107,17 @@ function ProfileView({ contact: c, groups, back, update, remove, logInteraction,
         {c.archived && (
           <div className="profile-archived">Archived — hidden from Today, People, and stats until you unarchive.</div>
         )}
+      </div>
+
+      <div className="card pcard">
+        <h3 className="pcard-title">Key facts</h3>
+        {(c.facts || []).length === 0 && (
+          <p className="li-tip" style={{ marginBottom: 10 }}>
+            The things you'd hate to forget — kids' names, what they're into, what you owe each other.
+          </p>
+        )}
+        <MultiField label="" values={c.facts || []} type="text"
+          ph="Two kids: Mia and Theo" onChange={(v) => set({ facts: v })} />
       </div>
 
       <div className="card pcard">
@@ -1376,6 +1399,174 @@ function HistoryView({ contacts, openProfile }) {
   );
 }
 
+function Bar({ label, value, max, color }) {
+  const pct = max > 0 ? Math.round((value / max) * 100) : 0;
+  return (
+    <div className="bar-row">
+      <span className="bar-label">{label}</span>
+      <span className="bar-track"><span className={"bar-fill" + (color != null ? " gcf-" + color : "")} style={{ width: Math.max(pct, 2) + "%" }} /></span>
+      <span className="bar-value">{value}</span>
+    </div>
+  );
+}
+
+function InsightsView({ contacts, groups, openProfile }) {
+  const active = useMemo(() => contacts.filter((c) => !c.archived), [contacts]);
+
+  const byCategory = useMemo(() => {
+    const counts = groups.map((g) => ({
+      label: g.name, color: g.color,
+      value: active.filter((c) => (c.groups || []).includes(g.name)).length,
+    }));
+    const none = active.filter((c) => (c.groups || []).length === 0).length;
+    if (none) counts.push({ label: "Uncategorized", color: null, value: none });
+    return counts.sort((a, b) => b.value - a.value);
+  }, [active, groups]);
+
+  const added = useMemo(() => {
+    const months = [];
+    const t = todayMid();
+    for (let i = 11; i >= 0; i--) {
+      const d = new Date(t.getFullYear(), t.getMonth() - i, 1);
+      months.push({ key: d.getFullYear() + "-" + pad(d.getMonth() + 1), label: d.toLocaleDateString(undefined, { month: "short" }), value: 0 });
+    }
+    const idx = new Map(months.map((m) => [m.key, m]));
+    for (const c of active) {
+      const k = String(c.createdAt || "").slice(0, 7);
+      const m = idx.get(k);
+      if (m) m.value++;
+    }
+    return months;
+  }, [active]);
+
+  const neglected = useMemo(() =>
+    active
+      .map((c) => ({ c, info: dueInfo(c), s: c.strength || 0 }))
+      .filter((x) => x.s >= 4 && (x.info.status === "overdue" || (!cadenceDays(x.c) && x.info.last && -daysFromToday(x.info.last) > 90)))
+      .sort((a, b) => (b.info.overdueDays ?? 0) - (a.info.overdueDays ?? 0) || b.s - a.s)
+      .slice(0, 8),
+    [active]);
+
+  const mix = useMemo(() => {
+    const counts = new Map(ITYPES.map((t) => [t.id, 0]));
+    let total = 0;
+    for (const c of active)
+      for (const it of c.interactions || []) {
+        if (counts.has(it.type)) counts.set(it.type, counts.get(it.type) + 1);
+        total++;
+      }
+    return { rows: ITYPES.map((t) => ({ label: t.label, value: counts.get(t.id) })).filter((r) => r.value), total };
+  }, [active]);
+
+  const patterns = useMemo(() => {
+    let inbound = 0, outbound = 0, replied = [], withData = 0;
+    for (const c of active) {
+      const r = responsePatterns(c);
+      if (!r.logged) continue;
+      withData++;
+      inbound += r.inbound; outbound += r.outbound;
+      if (r.medianReplyDays != null) replied.push(r.medianReplyDays);
+    }
+    replied.sort((a, b) => a - b);
+    return {
+      withData, inbound, outbound,
+      median: replied.length ? replied[Math.floor(replied.length / 2)] : null,
+    };
+  }, [active]);
+
+  const maxCat = Math.max(1, ...byCategory.map((b) => b.value));
+  const maxAdd = Math.max(1, ...added.map((b) => b.value));
+  const maxMix = Math.max(1, ...mix.rows.map((b) => b.value));
+
+  return (
+    <div className="page">
+      <header className="page-head">
+        <h1 className="page-title display">Insights</h1>
+        <p className="page-sub">{active.length} active {active.length === 1 ? "person" : "people"} · {mix.total} interactions logged</p>
+      </header>
+
+      <section className="section" style={{ marginTop: 0 }}>
+        <div className="section-head"><h2 className="section-title">Network by category</h2></div>
+        <div className="card pcard">
+          {byCategory.length === 0 && <p className="li-tip">No categories yet.</p>}
+          {byCategory.map((b) => <Bar key={b.label} {...b} max={maxCat} />)}
+        </div>
+      </section>
+
+      <section className="section">
+        <div className="section-head"><h2 className="section-title">Contacts added</h2><span className="section-count">last 12 months</span></div>
+        <div className="card pcard">
+          <div className="spark">
+            {added.map((m, i) => (
+              <div className="spark-col" key={i} title={m.value + " added"}>
+                <div className="spark-bar" style={{ height: Math.max(2, Math.round((m.value / maxAdd) * 64)) + "px" }} />
+                <span className="spark-label">{m.label}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="section">
+        <div className="section-head">
+          <h2 className="section-title">Neglected relationships</h2>
+          {neglected.length > 0 && <span className="section-count">{neglected.length}</span>}
+        </div>
+        <div className="card row-list">
+          {neglected.length === 0 && (
+            <div className="empty"><Icon n="check" size={26} />
+              <div className="display">Nobody important is drifting</div>
+              <p>People you rated 4–5 are all within their cadence.</p></div>
+          )}
+          {neglected.map(({ c, info, s }) => (
+            <div className="up-row" key={c.id}>
+              <Avatar c={c} size={34} />
+              <div className="up-body">
+                <div className="up-title"><button onClick={() => openProfile(c.id)}>{c.name}</button></div>
+                <div className="up-sub">
+                  Strength {s}/5 · last touch {ago(info.last ? -daysFromToday(info.last) : null)}
+                </div>
+              </div>
+              <span className="up-when">
+                {info.status === "overdue" ? info.overdueDays + "d over" : "no cadence"}
+              </span>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="section">
+        <div className="section-head"><h2 className="section-title">How you keep in touch</h2></div>
+        <div className="card pcard">
+          {mix.rows.length === 0 && <p className="li-tip">Log an interaction and the mix shows up here.</p>}
+          {mix.rows.map((b) => <Bar key={b.label} {...b} max={maxMix} />)}
+        </div>
+      </section>
+
+      <section className="section">
+        <div className="section-head"><h2 className="section-title">Response patterns</h2></div>
+        <div className="card pcard">
+          {patterns.withData === 0 ? (
+            <p className="li-tip">
+              Needs direction data, which arrives once Gmail sync is connected — logged emails record
+              who reached out first. Manually logged interactions don't carry a direction.
+            </p>
+          ) : (
+            <div className="stat-row">
+              <div className="stat"><b>{patterns.outbound}</b><span>you reached out</span></div>
+              <div className="stat"><b>{patterns.inbound}</b><span>they reached out</span></div>
+              <div className="stat">
+                <b>{patterns.median == null ? "—" : patterns.median + "d"}</b>
+                <span>typical reply time</span>
+              </div>
+            </div>
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
 /* ============================== import / export ============================== */
 
 function parseCSV(text) {
@@ -1424,6 +1615,10 @@ function contactsToCSV(contacts) {
     ["Last contacted", (c) => lastContact(c) || ""],
     ["Interactions", (c) => String((c.interactions || []).length)],
     ["How we met", (c) => c.context],
+    ["Pronouns", (c) => c.pronouns],
+    ["Timezone", (c) => c.timezone],
+    ["Preferred contact", (c) => c.preferred],
+    ["Key facts", (c) => (c.facts || []).join("; ")],
     ["Birthday", (c) => c.birthday],
     ["Notes", (c) => c.notes],
     ["Archived", (c) => (c.archived ? "yes" : "")],
@@ -1565,6 +1760,10 @@ function normalizeData(raw) {
       emails: strList(c.emails),
       phones: strList(c.phones),
       lastContactedAt: typeof c.lastContactedAt === "string" ? c.lastContactedAt : "",
+      timezone: typeof c.timezone === "string" ? c.timezone : "",
+      pronouns: typeof c.pronouns === "string" ? c.pronouns : "",
+      preferred: typeof c.preferred === "string" ? c.preferred : "",
+      facts: strList(c.facts),
       linkedin: typeof c.linkedin === "string" ? c.linkedin : "",
       connectedOn: typeof c.connectedOn === "string" ? c.connectedOn : "",
     };
@@ -1601,6 +1800,10 @@ function App() {
   const [exportText, setExportText] = useState(null);
   const [liOpen, setLiOpen] = useState(false);
   const [catsOpen, setCatsOpen] = useState(false);
+  const [qcOpen, setQcOpen] = useState(false);
+  const [qcText, setQcText] = useState("");
+  const [qcDraft, setQcDraft] = useState(null);
+  const [mergePair, setMergePair] = useState(null);
   const [rulesOpen, setRulesOpen] = useState(false);
   const [review, setReview] = useState(null);
   const [impGroup, setImpGroup] = useState("");
@@ -1960,9 +2163,75 @@ function App() {
     toast(verbs[action] || "Done");
   }, [toast]);
 
+  const runQuickCapture = () => {
+    const parsed = parseQuickCapture(qcText);
+    if (!parsed) { toast("Couldn't find a name in that — try \"met Jane, VP Eng at Acme\""); return; }
+    const draft = blankContact(parsed.name);
+    for (const k of ["role", "company", "location", "context", "linkedin", "notes"])
+      if (parsed[k]) draft[k] = parsed[k];
+    draft.emails = parsed.emails || [];
+    draft.phones = parsed.phones || [];
+    const auto = suggestFromRules(draft, data.rules);
+    draft.groups = auto.groups;
+    draft.tags = auto.tags;
+    setQcDraft(draft);
+  };
+
+  const saveQuickCapture = () => {
+    if (!qcDraft) return;
+    const c = { ...qcDraft, name: qcDraft.name.trim() };
+    if (!c.name) { toast("Give them a name first"); return; }
+    setData((d) => {
+      let groups = d.groups;
+      for (const g of c.groups || [])
+        if (!groups.some((x) => x.name === g)) groups = [...groups, { name: g, color: groups.length % 8 }];
+      return { ...d, contacts: [...d.contacts, c], groups };
+    });
+    setQcOpen(false); setQcText(""); setQcDraft(null);
+    setRoute({ name: "profile", id: c.id, from: "people" });
+    toast("Added " + c.name);
+  };
+
   const [dupOpen, setDupOpen] = useState(false);
   const dupGroups = useMemo(() => (dupOpen ? findDuplicates(contacts) : []), [dupOpen, contacts]);
   const dupCount = useMemo(() => findDuplicates(contacts).length, [contacts]);
+
+  /* Field-level merge: `picks` maps field -> which contact id wins. */
+  const mergeWithPicks = useCallback((leftId, rightId, picks, keepId) => {
+    setData((d) => {
+      const L = d.contacts.find((c) => c.id === leftId);
+      const R = d.contacts.find((c) => c.id === rightId);
+      if (!L || !R) return d;
+      const keep = keepId === rightId ? R : L;
+      const other = keep === L ? R : L;
+      const merged = { ...keep, sample: false };
+      for (const [field, winnerId] of Object.entries(picks)) {
+        const src = winnerId === leftId ? L : R;
+        merged[field] = src[field];
+      }
+      // Collections always union — you never want to lose history.
+      merged.emails = [...new Set([...(L.emails || []), ...(R.emails || [])])];
+      merged.phones = [...new Set([...(L.phones || []), ...(R.phones || [])])];
+      merged.tags = [...new Set([...(L.tags || []), ...(R.tags || [])])];
+      merged.groups = [...new Set([...(L.groups || []), ...(R.groups || [])])];
+      merged.facts = [...new Set([...(L.facts || []), ...(R.facts || [])])];
+      merged.custom = [...(keep.custom || []), ...(other.custom || []).filter(
+        (cf) => !(keep.custom || []).some((k) => k.label === cf.label && k.value === cf.value))];
+      merged.reminders = [...(L.reminders || []), ...(R.reminders || [])];
+      merged.dates = [...(L.dates || []), ...(R.dates || [])];
+      const seen = new Set();
+      merged.interactions = [...(L.interactions || []), ...(R.interactions || [])].filter((it) => {
+        const k = it.id || (it.date + "|" + it.type + "|" + (it.text || ""));
+        if (seen.has(k)) return false;
+        seen.add(k); return true;
+      });
+      merged.strength = Math.max(L.strength || 0, R.strength || 0);
+      merged.starred = L.starred || R.starred;
+      return { ...d, contacts: d.contacts.filter((c) => c.id !== other.id).map((c) => (c.id === merged.id ? merged : c)) };
+    });
+    setMergePair(null);
+    toast("Merged into one record");
+  }, [toast]);
 
   const mergeContacts = useCallback((ids) => {
     setData((d) => {
@@ -2184,6 +2453,10 @@ function App() {
             onClick={() => setRoute({ name: "history" })}>
             <Icon n="history" size={17} />History
           </button>
+          <button className={"nav-btn" + (route.name === "insights" ? " on" : "")}
+            onClick={() => setRoute({ name: "insights" })}>
+            <Icon n="chart" size={17} />Insights
+          </button>
         </nav>
         <div className="rail-spacer" />
         {HTTP && syncState !== "off" && (
@@ -2230,6 +2503,9 @@ function App() {
           )}
         </div>
         <div className="rail-tools">
+          <button className="rail-tool" onClick={() => { setQcOpen(true); setQcDraft(null); }}>
+            <Icon n="bolt" size={15} /><span>Quick capture</span>
+          </button>
           <button className="rail-tool" onClick={() => setCatsOpen(true)}>
             <Icon n="tag" size={15} /><span>Categories</span>
           </button>
@@ -2277,6 +2553,10 @@ function App() {
             openProfile={(id) => setRoute({ name: "profile", id, from: "people" })}
             addContact={addContact} focusSignal={route.focus} initialShow={route.show}
             toggleStar={toggleStar} bulkApply={bulkApply} />
+        )}
+        {route.name === "insights" && (
+          <InsightsView contacts={contacts} groups={data.groups}
+            openProfile={(id) => setRoute({ name: "profile", id, from: "insights" })} />
         )}
         {route.name === "history" && (
           <HistoryView contacts={contacts}
@@ -2397,6 +2677,121 @@ function App() {
         </div>
       )}
 
+      {qcOpen && (
+        <div className="overlay" onClick={() => setQcOpen(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3>Quick capture</h3>
+            {!qcDraft ? (
+              <>
+                <p>Paste or type what you'd scribble on a napkin. Nothing is saved until you confirm.</p>
+                <textarea className="li-paste" rows={3} value={qcText} autoFocus
+                  placeholder="met Jane, VP Eng at Acme, referred by Sam"
+                  onChange={(e) => setQcText(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) runQuickCapture(); }} />
+                <div className="modal-actions">
+                  <button className="btn" onClick={() => setQcOpen(false)}>Cancel</button>
+                  <button className="btn primary" disabled={!qcText.trim()} onClick={runQuickCapture}>Parse it</button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p>Here's what I read. Fix anything, then save.</p>
+                <div className="qc-grid">
+                  {[
+                    ["name", "Name"], ["role", "Title"], ["company", "Company"],
+                    ["location", "Location"], ["context", "How we met"],
+                  ].map(([k, label]) => (
+                    <label className="qc-field" key={k}>
+                      <span>{label}</span>
+                      <input value={qcDraft[k] || ""} onChange={(e) => setQcDraft({ ...qcDraft, [k]: e.target.value })} />
+                    </label>
+                  ))}
+                  <label className="qc-field">
+                    <span>Email</span>
+                    <input value={(qcDraft.emails || []).join(", ")}
+                      onChange={(e) => setQcDraft({ ...qcDraft, emails: e.target.value.split(",").map((x) => x.trim()).filter(Boolean) })} />
+                  </label>
+                  <label className="qc-field">
+                    <span>Phone</span>
+                    <input value={(qcDraft.phones || []).join(", ")}
+                      onChange={(e) => setQcDraft({ ...qcDraft, phones: e.target.value.split(",").map((x) => x.trim()).filter(Boolean) })} />
+                  </label>
+                </div>
+                {qcDraft.notes && <p className="li-tip">Notes: {qcDraft.notes}</p>}
+                {(qcDraft.groups || []).length > 0 && (
+                  <div className="chip-row" style={{ marginTop: 10 }}>
+                    <span className="rule-word">rules suggest</span>
+                    {qcDraft.groups.map((g) => <span key={g} className={"chip gc-" + colorOf(data.groups, g)}>{g}</span>)}
+                  </div>
+                )}
+                <div className="modal-actions">
+                  <button className="btn" onClick={() => setQcDraft(null)}>Back</button>
+                  <button className="btn primary" onClick={saveQuickCapture}>Save person</button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {mergePair && (() => {
+        const L = contacts.find((c) => c.id === mergePair.left);
+        const R = contacts.find((c) => c.id === mergePair.right);
+        if (!L || !R) return null;
+        const FIELDS = [
+          ["name", "Name"], ["company", "Company"], ["role", "Title"], ["location", "Location"],
+          ["context", "How we met"], ["birthday", "Birthday"], ["linkedin", "LinkedIn"],
+          ["photo", "Photo"], ["notes", "Notes"], ["cadence", "Cadence"],
+        ];
+        const show = (c, k) => {
+          if (k === "cadence") return cadenceLabel(c) || "none";
+          if (k === "photo") return c.photo ? "yes" : "—";
+          return c[k] || "—";
+        };
+        return (
+          <div className="overlay" onClick={() => setMergePair(null)}>
+            <div className="modal wide" onClick={(e) => e.stopPropagation()}>
+              <h3>Merge two records</h3>
+              <p>
+                Pick the winner for each field. Emails, phones, tags, categories, key facts, and
+                both timelines are always combined — nothing is discarded.
+              </p>
+              <div className="merge-grid">
+                <div className="merge-head" />
+                <div className="merge-head"><Avatar c={L} size={26} />{L.name}</div>
+                <div className="merge-head"><Avatar c={R} size={26} />{R.name}</div>
+                {FIELDS.map(([k, label]) => {
+                  const same = show(L, k) === show(R, k);
+                  return (
+                    <React.Fragment key={k}>
+                      <div className={"merge-key" + (same ? " same" : "")}>{label}</div>
+                      {[L, R].map((c) => (
+                        <label key={c.id} className={"merge-cell" + (mergePair.picks[k] === c.id ? " on" : "") + (same ? " same" : "")}>
+                          <input type="radio" name={"m-" + k} checked={mergePair.picks[k] === c.id}
+                            onChange={() => setMergePair({ ...mergePair, picks: { ...mergePair.picks, [k]: c.id } })} />
+                          <span>{String(show(c, k)).slice(0, 90)}</span>
+                        </label>
+                      ))}
+                    </React.Fragment>
+                  );
+                })}
+              </div>
+              <div className="merge-note">
+                <b>{L.interactions.length + R.interactions.length}</b> interactions and{" "}
+                <b>{new Set([...(L.emails || []), ...(R.emails || [])]).size}</b> email addresses will be kept.
+              </div>
+              <div className="modal-actions">
+                <button className="btn" onClick={() => setMergePair(null)}>Cancel</button>
+                <button className="btn primary"
+                  onClick={() => mergeWithPicks(L.id, R.id, mergePair.picks, mergePair.picks.name || L.id)}>
+                  Merge
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {catsOpen && (
         <div className="overlay" onClick={() => setCatsOpen(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
@@ -2477,9 +2872,19 @@ function App() {
                     </div>
                   );
                 })}
-                <button className="btn primary sm" onClick={() => mergeContacts(ids)}>
-                  <Icon n="merge" size={13} />Merge {ids.length}
-                </button>
+                <div className="li-actions">
+                  {ids.length === 2 && (
+                    <button className="btn sm" onClick={() => {
+                      setDupOpen(false);
+                      setMergePair({ left: ids[0], right: ids[1], picks: Object.fromEntries(
+                        ["name", "company", "role", "location", "context", "birthday", "linkedin", "photo", "notes", "cadence"]
+                          .map((k) => [k, ids[0]])) });
+                    }}>Review field by field</button>
+                  )}
+                  <button className="btn primary sm" onClick={() => mergeContacts(ids)}>
+                    <Icon n="merge" size={13} />Merge {ids.length}
+                  </button>
+                </div>
               </div>
             ))}
             <div className="modal-actions">
