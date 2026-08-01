@@ -5,7 +5,7 @@ import {
   fmtShort, fmtLong, ago, inDays, parseBirthday, nextBirthday, lastContact,
   cadenceDays, cadenceLabel, dueInfo, typicalGap, suggestCadence, findDuplicates,
   GROUP_COLORS, DEFAULT_GROUPS, DEFAULT_RULES, suggestFromRules, ruleMatches,
-  groupName, normalizeGroups, colorOf, customDays, UNIT_DAYS,
+  groupName, normalizeGroups, colorOf, customDays, UNIT_DAYS, applyAiFilter,
 } from "./due.js";
 import { responsePatterns } from "./match.js";
 import { parseQuickCapture } from "./parse.js";
@@ -413,7 +413,7 @@ function greeting() {
   return "Good evening";
 }
 
-function TodayView({ contacts, groups, openProfile, logInteraction, snooze, completeReminder, acceptSuggest, dismissSuggest, openPeople }) {
+function TodayView({ contacts, groups, openProfile, logInteraction, snooze, completeReminder, acceptSuggest, dismissSuggest, openPeople, sync }) {
   const [logging, setLogging] = useState(null);
   const today = todayMid();
 
@@ -423,6 +423,15 @@ function TodayView({ contacts, groups, openProfile, logInteraction, snooze, comp
       .filter((x) => x.s)
       .slice(0, 3),
     [contacts]);
+
+  const todayMeetings = useMemo(() => {
+    const iso0 = iso(todayMid());
+    const out = [];
+    for (const c of contacts)
+      for (const it of c.interactions || [])
+        if (it.type === "event" && it.date === iso0) out.push({ c, it });
+    return out;
+  }, [contacts]);
 
   const recent = useMemo(() => {
     const out = [];
@@ -508,6 +517,46 @@ function TodayView({ contacts, groups, openProfile, logInteraction, snooze, comp
           </span>
         </p>
       </header>
+
+      {sync && sync.show && (
+        <div className="sync-strip">
+          <span className={"dot " + (sync.connected ? "ok" : "off")} />
+          {sync.connected ? (
+            <>
+              <span>Gmail &amp; Calendar syncing{sync.lastSyncedAt ? " · last checked " + sync.relative : ""}</span>
+              <button className="btn ghost sm" onClick={sync.onSync} disabled={sync.busy}>
+                {sync.busy ? "Syncing…" : "Sync now"}
+              </button>
+            </>
+          ) : (
+            <>
+              <span>Gmail and Calendar aren't connected — interactions are manual for now.</span>
+              <button className="btn ghost sm" onClick={sync.onOpen}>Set up</button>
+            </>
+          )}
+        </div>
+      )}
+
+      {todayMeetings.length > 0 && (
+        <section className="section" style={{ marginTop: 0 }}>
+          <div className="section-head">
+            <h2 className="section-title">Meeting today</h2>
+            <span className="section-count">{todayMeetings.length}</span>
+          </div>
+          <div className="card row-list">
+            {todayMeetings.map(({ c, it }) => (
+              <div className="up-row" key={it.id}>
+                <Avatar c={c} size={34} />
+                <div className="up-body">
+                  <div className="up-title"><button onClick={() => openProfile(c.id)}>{c.name}</button></div>
+                  <div className="up-sub">{it.text}</div>
+                </div>
+                <span className="up-when">today</span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       <section className="section" style={{ marginTop: 0 }}>
         <div className="section-head">
@@ -677,7 +726,22 @@ function TodayView({ contacts, groups, openProfile, logInteraction, snooze, comp
 
 /* ============================== people view ============================== */
 
-function PeopleView({ contacts, groups, prefs, setPrefs, openProfile, addContact, focusSignal, toggleStar, bulkApply, initialShow }) {
+function PeopleView({ contacts, groups, prefs, setPrefs, openProfile, addContact, focusSignal, toggleStar, bulkApply, initialShow, aiReady, aiCall, toast }) {
+  const [ask, setAsk] = useState("");
+  const [askOpen, setAskOpen] = useState(false);
+  const [askBusy, setAskBusy] = useState(false);
+  const [askResult, setAskResult] = useState(null);
+
+  const runAsk = async () => {
+    if (!ask.trim()) return;
+    setAskBusy(true);
+    try {
+      const out = await aiCall({ task: "search", query: ask });
+      const ids = new Set(applyAiFilter(contacts, out.filter).map((c) => c.id));
+      setAskResult({ ids, explain: (out.filter && out.filter.explain) || "", n: ids.size });
+    } catch (e) { toast(String(e.message || e)); }
+    setAskBusy(false);
+  };
   const [q, setQ] = useState("");
   const [group, setGroup] = useState("");
   const [tag, setTag] = useState("");
@@ -722,6 +786,7 @@ function PeopleView({ contacts, groups, prefs, setPrefs, openProfile, addContact
     const list = contacts
       .map((c) => ({ c, info: dueInfo(c) }))
       .filter(({ c, info }) => {
+        if (askResult && !askResult.ids.has(c.id)) return false;
         if (show === "active" && c.archived) return false;
         if (show === "starred" && (!c.starred || c.archived)) return false;
         if (show === "archived" && !c.archived) return false;
@@ -746,7 +811,7 @@ function PeopleView({ contacts, groups, prefs, setPrefs, openProfile, addContact
       (b.c.strength || 0) - (a.c.strength || 0) || a.c.name.localeCompare(b.c.name));
     else list.sort((a, b) => a.c.name.localeCompare(b.c.name));
     return list;
-  }, [contacts, q, group, tag, status, show, sort, strength]);
+  }, [contacts, q, group, tag, status, show, sort, strength, askResult]);
 
   const submitNew = (e) => {
     e.preventDefault();
@@ -836,7 +901,32 @@ function PeopleView({ contacts, groups, prefs, setPrefs, openProfile, addContact
             {bulk ? "Done" : "Select"}
           </button>
         )}
+        {aiReady && (
+          <button className={"btn sm" + (askOpen ? " primary" : "")} onClick={() => setAskOpen(!askOpen)}>
+            <Icon n="wand" size={13} />Ask
+          </button>
+        )}
       </div>
+
+      {askOpen && aiReady && (
+        <form className="ask-bar" onSubmit={(e) => { e.preventDefault(); runAsk(); }}>
+          <Icon n="wand" size={15} />
+          <input value={ask} autoFocus placeholder="investors I haven't talked to since spring"
+            onChange={(e) => setAsk(e.target.value)} />
+          <button className="btn primary sm" type="submit" disabled={askBusy || !ask.trim()}>
+            {askBusy ? "Thinking…" : "Ask"}
+          </button>
+          {askResult && (
+            <button className="btn ghost sm" type="button" onClick={() => { setAskResult(null); setAsk(""); }}>Clear</button>
+          )}
+        </form>
+      )}
+      {askResult && (
+        <div className="ask-result">
+          <b>{askResult.n}</b> {askResult.n === 1 ? "person" : "people"}
+          {askResult.explain ? " · " + askResult.explain : ""}
+        </div>
+      )}
 
       {shown.length === 0 ? (
         <div className="card empty">
@@ -948,6 +1038,116 @@ function PeopleView({ contacts, groups, prefs, setPrefs, openProfile, addContact
   );
 }
 
+function AiCard({ contact, aiReady, aiCall, groups, onApply, toast }) {
+  const [busy, setBusy] = useState("");
+  const [summary, setSummary] = useState("");
+  const [draft, setDraft] = useState("");
+  const [tone, setTone] = useState("warm");
+  const [suggest, setSuggest] = useState(null);
+  const [err, setErr] = useState("");
+
+  useEffect(() => { setSummary(""); setDraft(""); setSuggest(null); setErr(""); }, [contact.id]);
+
+  const run = async (task, extra) => {
+    setBusy(task); setErr("");
+    try {
+      const out = await aiCall({ task, personId: contact.id, ...extra });
+      if (task === "summarize") setSummary(out.text);
+      if (task === "draft") setDraft(out.text);
+      if (task === "suggest") setSuggest(out);
+    } catch (e) { setErr(String(e.message || e)); }
+    setBusy("");
+  };
+
+  const copy = async (text) => {
+    try { await navigator.clipboard.writeText(text); toast("Copied — review before you send"); }
+    catch (e) { toast("Select the text and copy manually"); }
+  };
+
+  if (!aiReady) {
+    return (
+      <div className="card pcard">
+        <h3 className="pcard-title">AI assist</h3>
+        <p className="li-tip">
+          Add an <b>ANTHROPIC_API_KEY</b> on the server (Integrations panel explains how) to summarize
+          this relationship, draft outreach, and get category suggestions. Everything else works without it.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="card pcard">
+      <div className="pcard-title-row">
+        <h3 className="pcard-title">AI assist</h3>
+        <span className="ai-note">drafts only — nothing is ever sent</span>
+      </div>
+      <div className="ai-actions">
+        <button className="btn sm" disabled={!!busy} onClick={() => run("summarize")}>
+          {busy === "summarize" ? "Thinking…" : "Summarize our relationship"}
+        </button>
+        <button className="btn sm" disabled={!!busy} onClick={() => run("suggest")}>
+          {busy === "suggest" ? "Thinking…" : "Suggest categories"}
+        </button>
+      </div>
+
+      {err && <p className="ai-err">{err}</p>}
+
+      {summary && (
+        <div className="ai-out">
+          <div className="ai-out-body">{summary}</div>
+          <button className="btn ghost sm" onClick={() => copy(summary)}>Copy</button>
+        </div>
+      )}
+
+      {suggest && (
+        <div className="ai-out">
+          <div className="ai-out-body">
+            {suggest.why && <p style={{ margin: "0 0 8px" }}>{suggest.why}</p>}
+            <div className="chip-row">
+              {(suggest.categories || []).map((g) => (
+                <button key={g} className={"chip gc-" + colorOf(groups, g)}
+                  onClick={() => onApply({ group: g })}>+ {g}</button>
+              ))}
+              {(suggest.tags || []).map((t) => (
+                <button key={t} className="chip" onClick={() => onApply({ tag: t })}>+ {t}</button>
+              ))}
+            </div>
+            {!(suggest.categories || []).length && !(suggest.tags || []).length && (
+              <p style={{ margin: 0 }}>No confident suggestion — this one's on you.</p>
+            )}
+            <p className="ai-note" style={{ marginTop: 8 }}>Tap one to apply it.</p>
+          </div>
+        </div>
+      )}
+
+      <div className="ai-draft">
+        <div className="type-chips">
+          {["warm", "professional", "brief"].map((x) => (
+            <button key={x} className={"type-chip" + (tone === x ? " on" : "")} onClick={() => setTone(x)}>{x}</button>
+          ))}
+          <button className="btn primary sm" disabled={!!busy} onClick={() => run("draft", { tone })}>
+            {busy === "draft" ? "Drafting…" : "Draft outreach"}
+          </button>
+        </div>
+        {draft && (
+          <div className="ai-out">
+            <textarea className="ai-draft-text" value={draft} onChange={(e) => setDraft(e.target.value)} rows={6} />
+            <div className="li-actions">
+              <button className="btn sm" onClick={() => copy(draft)}>Copy</button>
+              {(contact.emails || [])[0] && (
+                <a className="btn sm" href={"mailto:" + contact.emails[0] + "?body=" + encodeURIComponent(draft)}>
+                  Open in mail
+                </a>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ============================== profile view ============================== */
 
 const CORE_FIELDS = [
@@ -1005,7 +1205,7 @@ function Strength({ value, onChange }) {
   );
 }
 
-function ProfileView({ contact: c, groups, back, update, remove, logInteraction, snooze, addGroup, toast }) {
+function ProfileView({ contact: c, groups, back, update, remove, logInteraction, snooze, addGroup, toast, aiReady, aiCall }) {
   const [composing, setComposing] = useState(false);
   const [fieldLabel, setFieldLabel] = useState("");
   const [addingField, setAddingField] = useState(false);
@@ -1231,6 +1431,13 @@ function ProfileView({ contact: c, groups, back, update, remove, logInteraction,
           )}
         </div>
       </div>
+
+      <AiCard contact={c} aiReady={aiReady} aiCall={aiCall} groups={groups} toast={toast}
+        onApply={({ group, tag }) => {
+          if (group) { addGroup(group); set({ groups: [...new Set([...(c.groups || []), group])] }); }
+          if (tag) set({ tags: [...new Set([...(c.tags || []), tag])] });
+          toast("Applied");
+        }} />
 
       <div className="card pcard">
         <h3 className="pcard-title">Notes</h3>
@@ -1804,6 +2011,9 @@ function App() {
   const [qcText, setQcText] = useState("");
   const [qcDraft, setQcDraft] = useState(null);
   const [mergePair, setMergePair] = useState(null);
+  const [integ, setInteg] = useState(null);
+  const [integOpen, setIntegOpen] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [rulesOpen, setRulesOpen] = useState(false);
   const [review, setReview] = useState(null);
   const [impGroup, setImpGroup] = useState("");
@@ -1876,6 +2086,65 @@ function App() {
     setPassDraft("");
     probeSync(p);
   }, [probeSync]);
+
+  /* ---- integrations (Google + Anthropic), all optional ---- */
+  const loadInteg = useCallback(async () => {
+    if (!HTTP || !passRef.current) return;
+    const { status, json } = await apiCall("api/integrations", {}, passRef.current);
+    if (status === 200 && json) setInteg(json);
+    else if (status === 404) setInteg({ unavailable: true });
+  }, []);
+
+  useEffect(() => { if (syncState === "synced") loadInteg(); }, [syncState, loadInteg]);
+
+  const saveInteg = useCallback(async (patch) => {
+    setInteg((cur) => (cur ? { ...cur, settings: { ...cur.settings, ...patch } } : cur));
+    const { status, json } = await apiCall("api/integrations",
+      { method: "PUT", body: JSON.stringify({ settings: patch }) }, passRef.current);
+    if (status === 200 && json) setInteg((cur) => ({ ...cur, settings: json.settings }));
+    else toast("Couldn't save that setting");
+  }, [toast]);
+
+  const connectGoogle = useCallback(async () => {
+    const { status, json } = await apiCall("api/google?action=start", {}, passRef.current);
+    if (status === 200 && json && json.url) window.location.href = json.url;
+    else toast((json && json.error) || "Google isn't configured on the server yet");
+  }, [toast]);
+
+  const disconnectGoogle = useCallback(async () => {
+    await apiCall("api/google?action=disconnect", {}, passRef.current);
+    toast("Google disconnected — nothing else changed");
+    loadInteg();
+  }, [toast, loadInteg]);
+
+  const runGoogleSync = useCallback(async (months) => {
+    setSyncing(true);
+    const { status, json } = await apiCall("api/gsync",
+      { method: "POST", body: JSON.stringify({ months: months || 0 }) }, passRef.current);
+    setSyncing(false);
+    if (status !== 200) { toast((json && json.error) || "Sync failed"); return; }
+    if (json.skipped) { toast("Skipped — " + json.skipped); return; }
+    toast(json.logged
+      ? "Logged " + json.logged + " interaction" + (json.logged === 1 ? "" : "s") + " across " + json.people + " people"
+      : "Up to date — nothing new to log");
+    if (json.errors && json.errors.length) toast(json.errors[0]);
+    loadInteg();
+    // pull the server doc straight away so the new interactions appear
+    const d = await apiCall("api/data", {}, passRef.current);
+    if (d.status === 200 && d.json && d.json.doc && d.json.version > versionRef.current) {
+      const parsed = normalizeData(d.json.doc);
+      if (parsed) { versionRef.current = d.json.version; skipPushRef.current = true; setData(parsed); }
+    }
+  }, [toast, loadInteg]);
+
+  const aiReady = !!(integ && integ.ai && integ.ai.configured && integ.settings && integ.settings.aiEnabled !== false);
+
+  const aiCall = useCallback(async (body) => {
+    const { status, json } = await apiCall("api/ai",
+      { method: "POST", body: JSON.stringify(body) }, passRef.current);
+    if (status !== 200) throw new Error((json && json.error) || "AI request failed (" + status + ")");
+    return json;
+  }, []);
 
   /* ---- daily push reminders (PWA) ---- */
   const PUSH_SUPPORTED = HTTP && "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
@@ -2503,6 +2772,12 @@ function App() {
           )}
         </div>
         <div className="rail-tools">
+          {HTTP && (
+            <button className="rail-tool" onClick={() => { setIntegOpen(true); loadInteg(); }}>
+              <Icon n="bolt" size={15} /><span>Integrations</span>
+              {integ && integ.google && integ.google.connected && <span className="dot-ok" />}
+            </button>
+          )}
           <button className="rail-tool" onClick={() => { setQcOpen(true); setQcDraft(null); }}>
             <Icon n="bolt" size={15} /><span>Quick capture</span>
           </button>
@@ -2545,14 +2820,25 @@ function App() {
             openProfile={(id) => setRoute({ name: "profile", id, from: "today" })}
             logInteraction={logInteraction} snooze={snooze} completeReminder={completeReminder}
             acceptSuggest={acceptSuggest} dismissSuggest={dismissSuggest}
-            openPeople={(show) => setRoute({ name: "people", show })} />
+            openPeople={(show) => setRoute({ name: "people", show })}
+            sync={HTTP && integ && !integ.unavailable ? {
+              show: true,
+              connected: !!(integ.google && integ.google.connected),
+              lastSyncedAt: integ.google && integ.google.lastSyncedAt,
+              relative: integ.google && integ.google.lastSyncedAt
+                ? ago(-daysFromToday(integ.google.lastSyncedAt.slice(0, 10))) : "",
+              busy: syncing,
+              onSync: () => runGoogleSync(0),
+              onOpen: () => { setIntegOpen(true); loadInteg(); },
+            } : null} />
         )}
         {route.name === "people" && (
           <PeopleView contacts={contacts} groups={data.groups} prefs={data.prefs}
             setPrefs={(p) => setData((d) => ({ ...d, prefs: { ...d.prefs, ...p } }))}
             openProfile={(id) => setRoute({ name: "profile", id, from: "people" })}
             addContact={addContact} focusSignal={route.focus} initialShow={route.show}
-            toggleStar={toggleStar} bulkApply={bulkApply} />
+            toggleStar={toggleStar} bulkApply={bulkApply}
+            aiReady={aiReady} aiCall={aiCall} toast={toast} />
         )}
         {route.name === "insights" && (
           <InsightsView contacts={contacts} groups={data.groups}
@@ -2566,7 +2852,8 @@ function App() {
           <ProfileView contact={profileContact} groups={data.groups}
             back={() => setRoute({ name: route.from || "people" })}
             update={updateContact} remove={removeContact}
-            logInteraction={logInteraction} snooze={snooze} addGroup={addGroup} toast={toast} />
+            logInteraction={logInteraction} snooze={snooze} addGroup={addGroup} toast={toast}
+            aiReady={aiReady} aiCall={aiCall} />
         ) : (
           <div className="page"><div className="card empty"><div className="display">Person not found</div>
             <p><button className="btn sm" onClick={() => setRoute({ name: "people" })}>Back to people</button></p></div></div>
@@ -2672,6 +2959,126 @@ function App() {
                 onClick={applyImport}>
                 Import {willImport}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {integOpen && (
+        <div className="overlay" onClick={() => setIntegOpen(false)}>
+          <div className="modal wide" onClick={(e) => e.stopPropagation()}>
+            <h3>Integrations</h3>
+            {!integ ? (
+              <p>Checking…</p>
+            ) : integ.unavailable ? (
+              <p>This build has no server, so integrations are unavailable. Deploy it (see DEPLOY.md) to connect Google or Anthropic.</p>
+            ) : (
+              <>
+                <div className="int-block">
+                  <div className="int-head">
+                    <b>Google — Gmail &amp; Calendar</b>
+                    <span className={"int-state " + (integ.google.connected ? "on" : "off")}>
+                      {integ.google.connected ? "Connected" : integ.google.configured ? "Not connected" : "Not configured"}
+                    </span>
+                  </div>
+                  {!integ.google.configured ? (
+                    <p className="li-tip">
+                      Add <b>GOOGLE_CLIENT_ID</b> and <b>GOOGLE_CLIENT_SECRET</b> to your server's environment
+                      variables, then redeploy. The README walks through creating the OAuth client — takes
+                      about five minutes. Authorized redirect URI:{" "}
+                      <code>{location.origin}/api/google</code>
+                    </p>
+                  ) : integ.google.connected ? (
+                    <>
+                      <p className="li-tip">
+                        Reading <b>{integ.google.email || "your account"}</b> — mail and calendar,
+                        read-only. Hearth cannot send anything.
+                        {integ.google.lastSyncedAt && (
+                          <> Last synced {ago(-daysFromToday(integ.google.lastSyncedAt.slice(0, 10)))}
+                          {integ.google.lastResult && integ.google.lastResult.logged
+                            ? " · logged " + integ.google.lastResult.logged + " that run" : ""}.</>
+                        )}
+                      </p>
+                      <div className="int-toggles">
+                        {[["gmailEnabled", "Log emails"], ["calendarEnabled", "Log meetings"]].map(([k, label]) => (
+                          <label className="li-check" key={k}>
+                            <input type="checkbox" checked={integ.settings[k] !== false}
+                              onChange={(e) => saveInteg({ [k]: e.target.checked })} />
+                            {label}
+                          </label>
+                        ))}
+                        <label className="li-check">
+                          <input type="checkbox" checked={integ.settings.googleEnabled !== false}
+                            onChange={(e) => saveInteg({ googleEnabled: e.target.checked })} />
+                          Sync on schedule
+                        </label>
+                      </div>
+                      <div className="li-actions">
+                        <button className="btn primary sm" disabled={syncing} onClick={() => runGoogleSync(0)}>
+                          {syncing ? "Syncing…" : "Sync now"}
+                        </button>
+                        <button className="btn sm" disabled={syncing} onClick={() => runGoogleSync(integ.settings.backfillMonths || 6)}>
+                          Backfill {integ.settings.backfillMonths || 6} months
+                        </button>
+                        <ConfirmButton className="btn ghost sm danger" label="Disconnect"
+                          confirmLabel="Really disconnect?" onConfirm={disconnectGoogle} />
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <p className="li-tip">
+                        Read-only access to Gmail and Calendar. Hearth matches senders and attendees to
+                        people you already have and logs an interaction — one per thread per day. It
+                        never sends, replies, or modifies anything.
+                      </p>
+                      <div className="li-actions">
+                        <button className="btn primary sm" onClick={connectGoogle}>Connect Google</button>
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                <div className="int-block">
+                  <div className="int-head">
+                    <b>Anthropic — AI assist</b>
+                    <span className={"int-state " + (integ.ai.configured ? "on" : "off")}>
+                      {integ.ai.configured ? "Key present" : "No key"}
+                    </span>
+                  </div>
+                  {integ.ai.configured ? (
+                    <>
+                      <p className="li-tip">
+                        Using <b>{integ.ai.model}</b>. Summaries, outreach drafts, category suggestions,
+                        and natural-language search. Drafts are always yours to review — nothing is sent.
+                      </p>
+                      <label className="li-check">
+                        <input type="checkbox" checked={integ.settings.aiEnabled !== false}
+                          onChange={(e) => saveInteg({ aiEnabled: e.target.checked })} />
+                        AI features on
+                      </label>
+                    </>
+                  ) : (
+                    <p className="li-tip">
+                      Add <b>ANTHROPIC_API_KEY</b> to your server's environment variables and redeploy.
+                      The key stays on the server and is never exposed to this page.
+                    </p>
+                  )}
+                </div>
+
+                <div className="int-block">
+                  <div className="int-head"><b>Digest</b></div>
+                  <p className="li-tip">Who's overdue, birthdays, and today's meetings — shown on Today and pushed each morning.</p>
+                  <div className="type-chips">
+                    {["daily", "weekly", "off"].map((x) => (
+                      <button key={x} className={"type-chip" + (integ.settings.digest === x ? " on" : "")}
+                        onClick={() => saveInteg({ digest: x })}>{x}</button>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+            <div className="modal-actions">
+              <button className="btn primary" onClick={() => setIntegOpen(false)}>Done</button>
             </div>
           </div>
         </div>

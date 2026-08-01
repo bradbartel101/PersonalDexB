@@ -29,14 +29,19 @@ export default async function handler(req, res) {
   if (req.method !== "GET" && req.method !== "POST")
     return res.status(405).json({ error: "Method not allowed" });
 
+  const settings = (await storeGet("integrations")) || {};
+  if (settings.digest === "off") return res.status(200).json({ sent: 0, reason: "digest switched off" });
+  if (settings.digest === "weekly" && new Date().getUTCDay() !== 1)
+    return res.status(200).json({ sent: 0, reason: "weekly digest — not Monday" });
+
   const stored = await storeGet("data");
   const subs = (await storeGet("pushsubs")) || {};
   const endpoints = Object.keys(subs);
   if (!stored || !stored.doc) return res.status(200).json({ sent: 0, reason: "no data yet" });
   if (!endpoints.length) return res.status(200).json({ sent: 0, reason: "no subscribers" });
 
-  const { due, today } = digestFor(stored.doc);
-  if (!due.length && !today.length)
+  const { due, today, meetings } = digestFor(stored.doc);
+  if (!due.length && !today.length && !meetings.length)
     return res.status(200).json({ sent: 0, reason: "nothing due — staying quiet" });
 
   const names = due.slice(0, 3).map((x) => x.c.name.split(" ")[0]);
@@ -46,6 +51,7 @@ export default async function handler(req, res) {
   const bodyParts = [];
   if (names.length) bodyParts.push(names.join(", ") + (due.length > 3 ? " +" + (due.length - 3) + " more" : ""));
   bodyParts.push(...today.slice(0, 2));
+  if (meetings.length) bodyParts.push(meetings.length + " meeting" + (meetings.length === 1 ? "" : "s") + " today");
   const payload = JSON.stringify({ title, body: bodyParts.join(" · "), url: "/" });
 
   const vapid = await getVapid();
@@ -63,5 +69,5 @@ export default async function handler(req, res) {
     }
   }
   if (pruned) await storeSet("pushsubs", subs);
-  return res.status(200).json({ sent, pruned, due: due.length, today: today.length, errors });
+  return res.status(200).json({ sent, pruned, due: due.length, today: today.length, meetings: meetings.length, errors });
 }

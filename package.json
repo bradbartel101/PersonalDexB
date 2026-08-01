@@ -7,11 +7,12 @@
   "scripts": {
     "build": "node build.mjs",
     "test:standalone": "node smoke.mjs hearth-standalone.html",
-    "test": "node smoke.mjs && node pro.mjs && node modeltest.mjs && node litest.mjs && node autotest.mjs && node synctest.mjs",
+    "test": "node matchtest.mjs && node parsetest.mjs && node gsynctest.mjs && node smoke.mjs && node pro.mjs && node modeltest.mjs && node litest.mjs && node autotest.mjs && node integtest.mjs && node synctest.mjs",
     "build:site": "node build.mjs && node scripts/site.mjs",
     "test:sync": "node synctest.mjs",
     "test:auto": "node autotest.mjs",
-    "test:model": "node modeltest.mjs"
+    "test:model": "node modeltest.mjs",
+    "test:unit": "node matchtest.mjs && node parsetest.mjs && node gsynctest.mjs"
   },
   "dependencies": {
     "react": "^19.2.4",

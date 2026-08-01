@@ -10,6 +10,10 @@ process.env.HEARTH_STORE_FILE = process.env.HEARTH_STORE_FILE || "./devstore.jso
 const { default: dataHandler } = await import("./api/data.js");
 const { default: pushHandler } = await import("./api/push.js");
 const { default: notifyHandler } = await import("./api/notify.js");
+const { default: googleHandler } = await import("./api/google.js");
+const { default: gsyncHandler } = await import("./api/gsync.js");
+const { default: integrationsHandler } = await import("./api/integrations.js");
+const { default: aiHandler } = await import("./api/ai.js");
 
 const STATIC = {
   "/sw.js": ["public/sw.js", "text/javascript"],
@@ -34,6 +38,10 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === "/api/data") return await dataHandler(req, res);
     if (url.pathname === "/api/push") return await pushHandler(req, res);
     if (url.pathname === "/api/notify") return await notifyHandler(req, res);
+    if (url.pathname === "/api/google") return await googleHandler(req, res);
+    if (url.pathname === "/api/gsync") return await gsyncHandler(req, res);
+    if (url.pathname === "/api/integrations") return await integrationsHandler(req, res);
+    if (url.pathname === "/api/ai") return await aiHandler(req, res);
   } catch (e) {
     return res.status(500).json({ error: String(e.message || e) });
   }

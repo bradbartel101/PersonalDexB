@@ -242,6 +242,50 @@ export function findDuplicates(contacts) {
   return groups;
 }
 
+/* Applies the JSON filter the model returns for a natural-language query.
+   Pure and defensive: unknown keys are ignored, and a filter that matches
+   nothing returns an empty list rather than throwing. */
+export function applyAiFilter(contacts, filter) {
+  const f = filter && typeof filter === "object" ? filter : {};
+  const lower = (v) => String(v || "").toLowerCase();
+  const wanted = (arr) => (Array.isArray(arr) ? arr.map(lower).filter(Boolean) : []);
+  const cats = wanted(f.categories);
+  const tags = wanted(f.tags);
+  const text = lower(f.text).trim();
+
+  let out = (contacts || []).filter((c) => {
+    if (c.archived && !f.includeArchived) return false;
+    if (cats.length && !(c.groups || []).some((g) => cats.includes(lower(g)))) return false;
+    if (tags.length && !(c.tags || []).some((t) => tags.includes(lower(t)))) return false;
+    if (f.uncategorized && (c.groups || []).length > 0) return false;
+    if (Number.isFinite(+f.minStrength) && (c.strength || 0) < +f.minStrength) return false;
+    if (f.overdue && dueInfo(c).status !== "overdue") return false;
+
+    const last = lastContact(c);
+    if (f.notContactedSince) {
+      // "haven't talked to since X": no contact at all, or nothing since X.
+      if (last && last >= String(f.notContactedSince)) return false;
+    }
+    if (f.contactedSince) {
+      if (!last || last < String(f.contactedSince)) return false;
+    }
+    if (text) {
+      const hay = [c.name, c.company, c.role, c.context, c.notes, c.location,
+        (c.tags || []).join(" "), (c.groups || []).join(" "), (c.facts || []).join(" ")]
+        .join(" ").toLowerCase();
+      if (!hay.includes(text)) return false;
+    }
+    return true;
+  });
+
+  const sort = f.sort;
+  if (sort === "overdue") out.sort((a, b) => (dueInfo(b).overdueDays ?? -99999) - (dueInfo(a).overdueDays ?? -99999));
+  else if (sort === "recent") out.sort((a, b) => (lastContact(b) || "").localeCompare(lastContact(a) || ""));
+  else if (sort === "strength") out.sort((a, b) => (b.strength || 0) - (a.strength || 0));
+  else out.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  return out;
+}
+
 /* Everything the daily digest needs, computed from a raw doc. */
 export function digestFor(doc) {
   const contacts = (doc && doc.contacts ? doc.contacts : []).filter((c) => c && !c.archived);
@@ -263,5 +307,10 @@ export function digestFor(doc) {
       if (occ && Math.round((occ.date - todayMid()) / DAY) === 0) today.push(dt.label + " — " + c.name);
     }
   }
-  return { due, today };
+  const meetings = [];
+  for (const c of contacts)
+    for (const it of c.interactions || [])
+      if (it.type === "event" && it.date === iso(todayMid()))
+        meetings.push(c.name + (it.text ? " — " + it.text : ""));
+  return { due, today, meetings };
 }

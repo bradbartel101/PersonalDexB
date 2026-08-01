@@ -76,6 +76,14 @@ The dashboard also shows:
 
 **Views** — searchable, filterable list (category, tag, cadence status, strength, uncategorized, archived) with list/grid toggle, bulk select for tag/category/cadence/star/archive/delete, and starring and archiving for the people you want pinned or hidden.
 
+**Enrichment** — pronouns, timezone, preferred contact method, and a **Key facts** list (kids' names, what they're into, what you owe each other) surfaced near the top of every profile.
+
+**Quick capture** — paste `met Jane, VP Eng at Acme, referred by Sam` and confirm the parsed draft. Runs locally; no API needed.
+
+**Insights** — network by category, contacts added over 12 months, neglected relationships (rated 4–5 but overdue), how you keep in touch, and response patterns.
+
+**Merge** — automatic duplicate detection plus a field-by-field review where you pick the winner per field. Emails, phones, tags, categories, key facts, and both timelines always survive.
+
 **Keyboard** — `n` new person, `/` search, `esc` back.
 
 **Backup** — **Export backup (JSON)** is the lossless format (restores everything including categories and rules). **Export contacts (CSV)** is the spreadsheet-friendly flat dump.
@@ -83,6 +91,32 @@ The dashboard also shows:
 Sample data ships with the app so nothing is empty on first run — clear it with **Clear sample data** in the sidebar.
 
 ---
+
+## Optional integrations
+
+Both are **off until you supply your own credentials**, both are individually toggleable in the **Integrations** panel, and the app is fully functional with neither. Credentials live in your deployment's environment variables and are never sent to the browser.
+
+### Gmail + Google Calendar (read-only)
+
+Auto-logs interactions by matching senders and meeting attendees to people you already have.
+
+1. [console.cloud.google.com](https://console.cloud.google.com) → create a project.
+2. **APIs & Services → Library** → enable **Gmail API** and **Google Calendar API**.
+3. **OAuth consent screen** → External → fill in the app name and your email → **Add users** and add your own Google address. Leave it in **Testing**; you'll click past an "unverified app" warning, which is expected for a personal tool. (Publishing would require Google's verification review — unnecessary here.)
+4. **Credentials → Create credentials → OAuth client ID → Web application.** Add an authorized redirect URI of `https://YOUR-DEPLOYMENT/api/google` (the Integrations panel shows the exact string).
+5. Put the client ID and secret in your environment as `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`, then redeploy.
+6. In Hearth: **Integrations → Connect Google**, then **Backfill 6 months**. After that a cron polls every four hours.
+
+Scopes requested: `gmail.readonly`, `calendar.readonly`, `userinfo.email`. There is no send scope anywhere in the codebase — Hearth cannot email, reply, or touch your calendar.
+
+What gets logged: one interaction per person per email thread per day (so a busy thread doesn't flood the timeline), and one per meeting per attendee. No-reply addresses, bulk senders (Substack, Mailchimp, etc.), solo calendar blocks, cancelled events, and meetings above 12 attendees are all ignored. Logged activity moves "last contacted" and the follow-up clock automatically. Re-syncing is idempotent — the same thread is never logged twice.
+
+### Anthropic (AI assist)
+
+1. Get a key at [console.anthropic.com](https://console.anthropic.com).
+2. Add `ANTHROPIC_API_KEY` to your environment (optionally `ANTHROPIC_MODEL`, default `claude-sonnet-5`), and redeploy.
+
+Features: **summarize our relationship** from the timeline and notes, **draft outreach** in a warm / professional / brief tone, **suggest categories and tags** with a confirm step, and **natural-language search** ("investors I haven't talked to since spring"). Every output is a draft you review — nothing is ever sent on your behalf, and the AI never writes to your CRM without a confirming tap. Calls are proxied through your own server so the key stays out of the page.
 
 ## LinkedIn import
 
@@ -123,10 +157,18 @@ Without a backend — opening the file, or the GitHub Pages build — the app ru
 
 ```
 src/app.jsx          the entire UI
-src/due.js           pure cadence / date / rules logic (shared with the API)
+src/due.js           pure cadence / date / rules / filter logic (shared with the API)
+src/match.js         pure email + calendar → person matching
+src/parse.js         pure quick-capture text parsing
 src/styles.css       design tokens + components (light and dark)
 build.mjs            esbuild bundle → hearth.html + hearth-standalone.html
-api/                 serverless routes: data sync, push subscriptions, daily digest
+api/data.js          synced CRM document
+api/google.js        OAuth start / callback / disconnect
+api/gsync.js         Gmail + Calendar → Interactions
+api/ai.js            Anthropic proxy (key stays server-side)
+api/integrations.js  feature toggles and connection status
+api/push.js          push subscriptions
+api/notify.js        daily digest cron
 dev-server.mjs       runs the API + app locally
 scripts/site.mjs     assembles public/ for deployment
 ```
@@ -147,3 +189,7 @@ npm run test:sync     # two-device sync + push digest (starts a real server)
 | `litest.mjs` | LinkedIn CSV: parsing, mapping, de-dupe, re-import modes |
 | `autotest.mjs` | Cadence suggestions, momentum, duplicate badge |
 | `synctest.mjs` | Two-device sync, service worker, encrypted push digest |
+| `matchtest.mjs` | Email/event → person matching: normalization, noise filters, thread collapsing, idempotency |
+| `parsetest.mjs` | Quick-capture parsing |
+| `gsynctest.mjs` | Full Gmail/Calendar sync pipeline against a mock Google API |
+| `integtest.mjs` | Integrations panel, AI features (stubbed Anthropic), NL search, quick capture, merge |
